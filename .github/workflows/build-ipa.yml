@@ -1,0 +1,98 @@
+name: Build Unsigned IPA (from manifest)
+
+on:
+  push:
+    branches: [ main ]
+    tags:     [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Unpack manifest & build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack manifest into project files
+        run: |
+          set -euo pipefail
+          if [ ! -f chess-helper.manifest.json ]; then
+            echo "❌ chess-helper.manifest.json not found in repo root"; exit 1
+          fi
+          python3 <<'PY'
+          import json, base64, os
+          m = json.load(open("chess-helper.manifest.json"))
+          for f in m["files"]:
+              path = f["path"]
+              os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+              with open(path, "wb") as fh:
+                  fh.write(base64.b64decode(f["b64"]))
+              print("  ✅", path)
+          print(f"Unpacked {len(m['files'])} files")
+          PY
+          echo "---- Project layout ----"
+          ls -la
+          find Sources Resources -maxdepth 3 -print
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build ChessHelper.app (unsigned, arm64)
+        run: |
+          set -eo pipefail
+          xcodebuild \
+            -project ChessHelper.xcodeproj \
+            -scheme ChessHelper \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Package as unsigned .ipa
+        run: |
+          set -eo pipefail
+          APP_PATH="$(find build/Build/Products -type d -name 'ChessHelper.app' | head -n 1)"
+          echo "App bundle: $APP_PATH"
+          [ -n "$APP_PATH" ] || { echo "ChessHelper.app not found"; exit 1; }
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qr ChessHelper-unsigned.ipa Payload
+          ls -lh ChessHelper-unsigned.ipa
+
+      - name: Upload IPA as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessHelper-unsigned-ipa
+          path: ChessHelper-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach IPA to GitHub Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ChessHelper-unsigned.ipa
+          generate_release_notes: true
+.github/workflows/build-ipa.yml

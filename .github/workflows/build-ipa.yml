@@ -95,4 +95,3 @@ jobs:
         with:
           files: ChessHelper-unsigned.ipa
           generate_release_notes: true
-.github/workflows/build-ipa.yml

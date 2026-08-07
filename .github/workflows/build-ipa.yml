@@ -1,4 +1,4 @@
-name: Build Unsigned IPA (from manifest)
+name: Build Unsigned IPA (Stealth v2 + Embedded Stockfish)
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   build:
-    name: Unpack manifest & build unsigned IPA
+    name: Build ChessHelper with embedded Stockfish
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f chess-helper.manifest.json ]; then
-            echo "❌ chess-helper.manifest.json not found in repo root"; exit 1
+            echo "❌ chess-helper.manifest.json not found"; exit 1
           fi
           python3 <<'PY'
           import json, base64, os
@@ -36,8 +36,6 @@ jobs:
               print("  ✅", path)
           print(f"Unpacked {len(m['files'])} files")
           PY
-          echo "---- Project layout ----"
-          ls -la
           find Sources Resources -maxdepth 3 -print
 
       - name: Select Xcode
@@ -47,6 +45,55 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Download & compile Stockfish 16 for iOS arm64
+        run: |
+          set -eo pipefail
+          echo "==> Cloning Stockfish 16"
+          git clone --depth 1 --branch sf_16 https://github.com/official-stockfish/Stockfish.git stockfish-src
+          cd stockfish-src/src
+
+          echo "==> Detecting iOS SDK"
+          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          CLANG=$(xcrun --sdk iphoneos --find clang++)
+          echo "SDK: $IOS_SDK"
+          echo "Compiler: $CLANG"
+
+          echo "==> Patching Makefile for iOS static lib"
+          # Build object files directly (no Makefile) — cleaner for iOS cross-compile
+          SRCS="benchmark.cpp bitbase.cpp bitboard.cpp endgame.cpp evaluate.cpp material.cpp \
+                misc.cpp movegen.cpp movepick.cpp pawns.cpp position.cpp psqt.cpp search.cpp \
+                thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp tbprobe.cpp \
+                nnue/evaluate_nnue.cpp nnue/features/half_ka_v2_hm.cpp"
+
+          IOS_FLAGS="-arch arm64 -isysroot $IOS_SDK -miphoneos-version-min=16.0 \
+                     -std=c++17 -O3 -DNDEBUG -DIS_64BIT -DUSE_POPCNT -DUSE_NEON=8 \
+                     -DNNUE_EMBEDDING_OFF -fno-exceptions -fno-rtti -fPIC"
+
+          echo "==> Compiling Stockfish sources"
+          mkdir -p ../../StockfishBuild
+          OBJS=""
+          for src in $SRCS; do
+            obj="../../StockfishBuild/$(echo $src | tr '/' '_').o"
+            echo "  cc $src"
+            $CLANG $IOS_FLAGS -I. -c $src -o $obj
+            OBJS="$OBJS $obj"
+          done
+
+          echo "==> Archiving into libstockfish.a"
+          xcrun --sdk iphoneos ar rcs ../../StockfishBuild/libstockfish.a $OBJS
+          echo "==> Done"
+          ls -lh ../../StockfishBuild/libstockfish.a
+
+      - name: Move Stockfish lib into project
+        run: |
+          set -e
+          mkdir -p Vendor/Stockfish/lib Vendor/Stockfish/include
+          cp StockfishBuild/libstockfish.a Vendor/Stockfish/lib/
+          # Copy the tiny UCI header we need
+          cp stockfish-src/src/uci.h Vendor/Stockfish/include/
+          cp stockfish-src/src/types.h Vendor/Stockfish/include/
+          ls -R Vendor/Stockfish
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -67,6 +114,7 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
             build
 
       - name: Package as unsigned .ipa
@@ -81,7 +129,7 @@ jobs:
           zip -qr ChessHelper-unsigned.ipa Payload
           ls -lh ChessHelper-unsigned.ipa
 
-      - name: Upload IPA as workflow artifact
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: ChessHelper-unsigned-ipa
@@ -89,7 +137,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Attach IPA to GitHub Release (on tag push)
+      - name: Attach IPA to Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:

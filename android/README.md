@@ -57,7 +57,10 @@ android/
 │   │   │       └── theme/Theme.kt       # Material3 dark, green primary
 │   │   └── res/values/…
 │   └── proguard-rules.pro
-└── .github/workflows/build-apk.yml # CI — builds debug + unsigned release APK
+├── release.keystore                # PKCS12, pass: chesshelper — every assembleRelease is SIGNED
+├── src/chess/                       # EXACT clone flavor: "Chess" (com.chess), green knight icon, stealth hidden
+├── src/helper/                      # Transparent helper flavor
+└── ci/build-apk.yml                # CI — copy to .github/workflows/build-apk.yml via Web UI (sandbox cannot push there)
 ```
 
 ---
@@ -161,15 +164,26 @@ adb install chesshelper-s26ultra.apk
 
 ---
 
-## GitHub Actions
+## GitHub Actions — signed builds for S26 Ultra
 
-`.github/workflows/build-apk.yml` builds both **debug** and **release (unsigned)** on every push/PR and uploads artifacts. For a tagged release `v*` it attaches APKs to the GitHub Release.
+Workflow is at **`android/ci/build-apk.yml`** — **copy it to `.github/workflows/build-apk.yml` via GitHub Web UI** (the sandbox GitHub App cannot push to `.github/workflows` directly, hence the indirection). Once copied:
 
-- Uses `gradle/actions/setup-gradle@v4` + JDK 17 — no local wrapper jar needed.
-- Real Stockfish step is **commented out** by default so CI stays fast without NDK. Uncomment the “Build Stockfish 16 for Android arm64” step to ship a strong engine.
-- Artifacts retained 30/90 days.
+- Triggers on `push` to `main`/`arena/*`, `pull_request`, `tags v*`, or `workflow_dispatch`.
+- Builds **both flavors** (`helper` + `chess` exact clone) in **debug** + **release**, using the committed `android/release.keystore` (pass `chesshelper`) → **every `assembleRelease` is SIGNED** (v1+v2+v3) and installs with one tap.
+- Uploads 4 artifacts:
+  - `ChessHelper-helper-debug-s26ultra-signed`
+  - `Chess-chess-debug-s26ultra-signed-exact-clone` — debug, exact icon/name
+  - `ChessHelper-helper-release-s26ultra-SIGNED`
+  - `Chess-chess-release-s26ultra-SIGNED-EXACT-CLONE` ← **exact clone, signed, one-tap**
+- For tags `v*`, attaches APKs to the GitHub Release.
+
+Steps to enable:
+1. GitHub → repo → **Add file → Create new file** → path `.github/workflows/build-apk.yml` → paste contents of `android/ci/build-apk.yml` → Commit.
+2. Push to `arena/4bb3aea7-chess2` or **Actions → Run workflow**.
 
 Download from **Actions → Build Android APK → Artifacts**.
+
+> **Want exact clone?** Install `Chess-chess-release-s26ultra-SIGNED-EXACT-CLONE` → launcher shows **“Chess”** with green knight, overlay hidden until **shake** or **3-finger tap**. Detailed stealth guide: `README_S26_EXACT.md`.
 
 ---
 

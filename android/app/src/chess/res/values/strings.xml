@@ -1,0 +1,4 @@
+<resources>
+    <!-- Exact clone: appears as official "Chess" — no hint of helper -->
+    <string name="app_name">Chess</string>
+</resources>

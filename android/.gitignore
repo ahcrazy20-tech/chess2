@@ -3,6 +3,8 @@
 /.gradle
 /local.properties
 /*.keystore
+# Keep the committed release.keystore for one-tap signed sideload (S26 Ultra)
+!release.keystore
 /.idea
 *.iml
 .gradle/

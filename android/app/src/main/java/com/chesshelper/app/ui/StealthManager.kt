@@ -34,13 +34,21 @@ import kotlin.math.sqrt
  */
 class StealthManager(context: Context) : ViewModel(), SensorEventListener {
 
-    var overlayVisible by mutableStateOf(true)
+    // For `chess` flavor (exact clone) we start HIDDEN so launcher looks 100% like official Chess.com.
+    // User reveals helper via shake or 3-finger tap — same as iOS stealth.
+    private val isStealthFlavor: Boolean = try {
+        // BuildConfig.IS_STEALTH is generated per-flavor (see app/build.gradle.kts). Fallback false if missing.
+        val fld = com.chesshelper.app.BuildConfig::class.java.getField("IS_STEALTH")
+        fld.get(null) as? Boolean ?: false
+    } catch (_: Exception) { false }
+
+    var overlayVisible by mutableStateOf(!isStealthFlavor) // chess flavor starts hidden
         private set
-    var minimalMode by mutableStateOf(false)
+    var minimalMode by mutableStateOf(isStealthFlavor) // stealth starts as tiny dot once revealed
         private set
     var isBeingRecorded by mutableStateOf(false)
         private set
-    var lastHideReason by mutableStateOf("")
+    var lastHideReason by mutableStateOf(if (isStealthFlavor) "stealth flavor" else "")
         private set
 
     private val appContext = context.applicationContext

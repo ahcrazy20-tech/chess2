@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:orientation="vertical">
+
+    <!-- Top nav bar: chess.com shortcuts (port of PlayView navBar) -->
+    <LinearLayout
+        android:id="@+id/topNav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#1A1A1A"
+        android:orientation="horizontal"
+        android:padding="4dp">
+
+        <Button
+            android:id="@+id/navHome"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Home"
+            android:textSize="10sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/navOnline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Online"
+            android:textSize="10sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/navBots"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Bots"
+            android:textSize="10sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/navPuzzles"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Puzzles"
+            android:textSize="10sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/navAnalysis"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Analysis"
+            android:textSize="10sp"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+
+    <!-- Board (WebView) + helper overlay stacked on top -->
+    <FrameLayout
+        android:id="@+id/boardContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <com.chesshelper.app.ChessWebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <LinearLayout
+            android:id="@+id/overlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone"
+            android:background="#8A1A1A1A">
+
+            <TextView
+                android:id="@+id/overlayStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Chess Helper"
+                android:textColor="@color/green"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/overlayBest"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="e4 (+0.30)"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/overlayMoves"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="1. Nf3   2. Nc3   3. d4"
+                android:textColor="@color/text_secondary" />
+
+            <Button
+                android:id="@+id/overlayPanic"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:text="Hide" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Bottom tab bar -->
+    <LinearLayout
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#1A1A1A"
+        android:orientation="horizontal"
+        android:padding="4dp">
+
+        <Button
+            android:id="@+id/btnTabPlay"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Play"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/btnTabReview"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Review"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/btnTabOpenings"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Openings"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/btnTabPuzzles"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Puzzles"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/btnTabStats"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stats"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+        <Button
+            android:id="@+id/btnTabSettings"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Settings"
+            android:textSize="11sp"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,60 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.chesshelper.app"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.chesshelper.app"
+        minSdk = 24
+        targetSdk = 36
+        versionCode = 20
+        versionName = "2.0.0"
+
+        // Samsung Galaxy S26 Ultra is ARM64. Ship only arm64-v8a.
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Sign with a debug keystore here for local testing.
+            // Replace with a release signingConfig for Play Store uploads.
+            signingConfig = signingConfigs.debug
+        }
+        debug {
+            debuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+    buildFeatures {
+        viewBinding = true
+    }
+    packagingOptions {
+        resources.excludes.add("META-INF/*")
+        resources.excludes.add("META-INF/services/*")
+    }
+}
+
+dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.activity:activity:1.9.0")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+}

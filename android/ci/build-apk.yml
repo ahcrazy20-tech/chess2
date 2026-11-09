@@ -1,0 +1,105 @@
+name: Build Android APK (S26 Ultra Optimized)
+
+on:
+  push:
+    branches: [ main, arena/* ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build ChessHelper APK (arm64, S26 Ultra)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew || true
+
+      # --- Stockfish bundling (optional) ---
+      # By default the APK ships with a MOCK engine (so CI never fails without NDK).
+      # To bundle real Stockfish for S26 Ultra (arm64-v8a, 6 threads, 128 MB hash):
+      #   1. Provide a prebuilt libstockfish.so in app/src/main/jniLibs/arm64-v8a/
+      #   2. Or uncomment the NDK build step below. NDK build takes ~4 min.
+      #
+      # NDK build (uncomment to compile Stockfish 16 from source for S26 Ultra):
+      # - name: Build Stockfish 16 for Android arm64
+      #   run: |
+      #     set -e
+      #     sudo apt-get update && sudo apt-get install -y make g++ clang
+      #     git clone --depth 1 --branch sf_16 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish
+      #     cd /tmp/stockfish/src
+      #     # Install NDK
+      #     $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"
+      #     export NDK=$ANDROID_HOME/ndk/27.0.12077973
+      #     export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+      #     export CC=$TOOLCHAIN/bin/aarch64-linux-android33-clang++
+      #     # Build Stockfish as shared lib for JNI (or as executable)
+      #     make -j$(nproc) build ARCH=armv8 COMP=ndk COMPCC="$CC" OS=android ndk TARGET=arm64-v8a
+      #     mkdir -p $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a
+      #     cp stockfish $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libstockfish.so || cp libstockfish.so $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/ || true
+      #     ls -lh $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/
+
+      - name: Build Debug APK (mock engine — works without NDK)
+        working-directory: android
+        run: |
+          # We use system gradle directly to avoid wrapper jar download issues
+          gradle assembleDebug --stacktrace --info
+
+      - name: Build Release APK (unsigned, S26 Ultra optimized)
+        working-directory: android
+        run: |
+          gradle assembleRelease --stacktrace
+
+      - name: List APKs
+        run: |
+          find android/app/build/outputs -name "*.apk" -type f | xargs ls -lh || true
+          find android/app/build/outputs -name "*.aab" -type f | xargs ls -lh || true
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessHelper-debug-s26ultra
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Release APK (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessHelper-release-unsigned-s26ultra
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Attach APK to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
+          generate_release_notes: true

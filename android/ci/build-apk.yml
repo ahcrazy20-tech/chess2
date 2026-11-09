@@ -30,6 +30,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # FIX 2026-11-09: v3 default is "tools platform-tools" but "tools" was removed
+          # by Google in 2023 and now fails with "Failed to find package 'tools'".
+          # Overriding packages to only what exists fixes the 14s setup failure.
+          packages: platform-tools
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4

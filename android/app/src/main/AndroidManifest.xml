@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Network: chess.com WebView + optional online engine fallback (offline is default) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- For S26 Ultra 120Hz hint & vibration (stealth haptics) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Large screen support - S26 Ultra 6.9" 3120x1440, 19.5:9, also DeX & Fold -->
+    <supports-screens
+        android:anyDensity="true"
+        android:largeScreens="true"
+        android:normalScreens="true"
+        android:smallScreens="false"
+        android:xlargeScreens="true"
+        android:requiresSmallestWidthDp="360" />
+
+    <application
+        android:name=".ChessApp"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.ChessHelper"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
+            android:windowSoftInputMode="adjustResize"
+            android:supportsPictureInPicture="false"
+            android:screenOrientation="unspecified">
+
+            <!-- S26 Ultra: edge-to-edge, display cutout handling, 120Hz -->
+            <layout android:defaultHeight="800dp" android:defaultWidth="600dp" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>

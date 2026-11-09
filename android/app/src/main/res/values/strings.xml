@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Chess Helper</string>
+    <string name="play">Play</string>
+    <string name="review">Review</string>
+    <string name="openings">Openings</string>
+    <string name="puzzles">Puzzles</string>
+    <string name="stats">Stats</string>
+    <string name="settings">Settings</string>
+</resources>

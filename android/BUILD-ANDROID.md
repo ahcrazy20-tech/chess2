@@ -1,103 +1,97 @@
-# Chess Helper — Android port (build notes)
+# Chess Helper — Android port (APK)
 
-This is an Android port of the iOS `ChessHelper` app in this repo (SwiftUI/Tuist). It is a
-chess helper that runs Stockfish locally on-device, shows a top-moves overlay while you play
-on chess.com, and includes stealth gestures (shake to hide, screen-capture/background auto-hide,
-minimal mode), an offline opening book, and PGN reading.
+A complete Android port of the iOS `ChessHelper` app in this repo. Everything the
+SwiftUI app does, the APK does — plus several upgrades (see the table below).
 
-## Target device
+## Feature matrix — iOS ↔ Android
 
-Samsung Galaxy S26 Ultra → **Android 16 (API level 36)**, **arm64-v8a** only.
+| Feature (iOS source)                        | Android implementation                    | Status |
+|---------------------------------------------|-------------------------------------------|--------|
+| Play tab: chess.com WebView (PlayView)      | `ChessWebView` + `MainActivity`           | ✅ full |
+| Board reader (reader.js v3)                 | `assets/reader.js` (dual bridge)          | ✅ full — all 3 chess.com DOM formats, flip consensus, ply count, diff-based last move |
+| Helper overlay (HelperOverlay.swift)        | `HelperOverlay`                           | ✅ full — best move SAN/UCI, eval, depth, win-chance bar, move grade, opening + popular replies, "then plan", PV, panic hide |
+| Engine analysis (EngineViewModel.swift)     | `EngineViewModel` + `EngineService`       | ✅ full — debounce, move quality, opening lookup, color override, manual/auto |
+| Local Stockfish (StockfishEngine.swift)     | `StockfishEngine` (UCI, Stockfish 19)     | ✅ upgraded — runs from `nativeLibraryDir` (Android 10+ W^X safe), white-POV scores |
+| — (no equivalent)                           | `FallbackEngine`                          | 🆕 pure-Kotlin engine — the app keeps working even without the Stockfish binary |
+| Blunder Review (ReviewView.swift)           | `ReviewTab`                               | ✅ full + fixed the inverted loss-sign bug of the Swift version |
+| Opening Trainer (OpeningsView.swift)        | `OpeningsTab`                             | ✅ full — 10 openings, quiz, filters, open-on-chess.com |
+| Puzzle Tracker (PuzzlesView.swift)          | `PuzzlesTab`                              | ✅ full — log attempts, per-theme stats, history |
+| Weakness Detector (StatsView.swift)         | `StatsTab`                                | ✅ full — same coaching insights |
+| Settings (SettingsView.swift)               | `SettingsActivity`                        | ✅ full + fixes the unsaved-switches bug of the scaffold |
+| Stealth (StealthManager.swift)              | `StealthManager` + `PanicFrameLayout`     | ✅ full — shake, 3-finger tap, background auto-hide |
+| Opening book (LocalOpeningBook.swift)       | `OpeningBook`                             | ✅ full |
+| PGN replay (PGN.swift)                      | `PgnReader` + `Board`                     | ✅ upgraded — real legal move generation, SAN output, FEN round-trip |
+| Ad-block CSS (adblock_css.css)              | `assets/adblock_css.css`                  | ✅ full |
+| Fair-play disclaimer                        | `MainActivity.showDisclaimer()`           | ✅ kept |
 
-## Prerequisites (install on a machine with internet to Google's SDK mirrors)
+## Target devices
 
-- Android Studio (latest) or the Android command-line tools
-- JDK 17
-- SDK platforms: `platforms;android-36`  (compileSdk / targetSdk = 36)
-- SDK build-tools: `build-tools;36.0.0` (or latest 36.x)
-- NDK: `ndk;27.x` or newer (arm64-v8a)
-- `sdkmanager`/`avdmanager` from `cmdline-tools`
+- **Samsung Galaxy S26 Ultra** → arm64-v8a (Stockfish 19 binary, ~3400 Elo)
+- Any Android 8.0+ phone (`minSdk 26`, needed for modern Kotlin codegen); armeabi-v7a and x86_64 are also built,
+  with the built-in engine as fallback when no binary matches.
 
-Example:
+## Prerequisites
+
+- JDK 17, Android SDK platform 35, build-tools 35.0.0
+- Gradle 8.9 (or Android Studio, which brings its own)
+
 ```
-sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
-           "ndk;27.0.12077973" "cmdline-tools;latest"
+sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 ```
 
-## Critical manual step — Stockfish binary (cannot be bundled here)
+## The Stockfish binary
 
-The sandbox that produced this scaffold cannot reach Google's release storage, so the
-Stockfish arm64 binary is NOT included. You must add it yourself before building:
+`CI` downloads the official Stockfish 19 Android binaries automatically
+(`workflows/build-apk.yml` — move it to `.github/workflows/` to activate) and packs them as:
 
-1. Download the official Stockfish Android arm64 binary from GitHub releases:
-   https://github.com/official-stockfish/Stockfish/releases
-   Asset: `stockfish-android-arm64-universal.tar.gz`
-2. Extract the `stockfish` binary inside.
-3. Place it at:
-   `android/app/src/main/assets/stockfish`
-4. Make sure it is executable (it will be `setExecutable(true)` at install time by the app).
+```
+android/app/src/main/jniLibs/arm64-v8a/libstockfish.so
+android/app/src/main/jniLibs/armeabi-v7a/libstockfish.so
+```
 
-`StockfishEngine.init(Context)` copies `assets/stockfish` into the app's private files dir
-and launches it over UCI — exactly like the iOS version (Stockfish 19 here; the iOS app used
-Stockfish 16 via ChessKitEngine).
+To build locally with real Stockfish, download
+`stockfish-android-arm64-universal.tar.gz` (and `…-armv7-neon.tar.gz`) from
+https://github.com/official-stockfish/Stockfish/releases and extract the binary
+to the paths above. **If the binary is missing, the app still works** using the
+built-in `FallbackEngine` (weaker play, full UI).
+
+Why `libstockfish.so` in jniLibs? Since Android 10, apps targeting API 29+ may
+not execute files from the writable app-data dir. `jniLibs` with
+`useLegacyPackaging = true` are extracted to `nativeLibraryDir`, which is
+executable — the standard trick used by Termux & co.
 
 ## Build
 
 ```
 cd android
-# (first time) generate a Gradle wrapper if you don't have gradle installed
-gradle wrapper --gradle-version 8.4
-
-# Debug build (installs to a connected S26 Ultra / emulator via adb)
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# Release build
-./gradlew assembleRelease
-# APK: app/build/outputs/apk/release/app-release-unsigned.apk
-# Sign it with your release keystore before Play Store upload.
+gradle assembleRelease        # → app/build/outputs/apk/release/app-release.apk (signed)
+gradle assembleDebug          # → app/build/outputs/apk/debug/app-debug.apk (signed)
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-## Configuration highlights (`android/app/build.gradle`)
+Both build types are signed with the community keystore at
+`android/release.keystore` (store/key password: `chesshelper`, alias
+`chesshelper`). Replace it with your own keystore before a Play Store upload.
 
-- `compileSdk = 36`, `targetSdk = 36`, `minSdk = 24`
-- `ndk { abiFilters.add("arm64-v8a") }` — S26 Ultra is ARM64 only
-- `versionCode = 20`, `versionName = "2.0.0"` (matches the iOS app)
-- Release build type signs with `signingConfigs.debug` — replace with your release
-  signingConfig for Play Store.
+## CI
 
-## What's ported vs. what's a stub
+`workflows/build-apk.yml` builds both APKs on every push (branches
+`main` and `arena/**`), verifies the signatures, and uploads the artifacts.
+Pushing a `v*` tag additionally attaches the APKs to a GitHub release.
 
-Ported from the iOS app:
-- `EngineViewModel` — debounced board ingestion, Stockfish analysis, move quality
-  (brilliant/best/good/inaccuracy/mistake/blunder), centipawn loss, opening lookup.
-- `StockfishEngine` — UCI process wrapper (threads=3, hash=64, multiPV=3).
-- `OpeningBook` — offline ECO book (same entries as `LocalOpeningBook.swift`).
-- `PgnReader` — PGN move extraction (board stepping deferred to Stockfish FEN commands).
-- `StealthManager` — shake detection, backgrounding auto-hide, screen-capture hook.
-- `HelperOverlay` equivalent — top-moves panel + minimal dot + panic button.
-- `Settings` — depth/movetime/multiPV + stealth toggles (SharedPreferences).
-- `ChessWebView` — loads chess.com, JS bridge reports the board.
+## Architecture notes
 
-Not yet implemented (stubs / placeholders): Review, Openings, Puzzles, Stats tabs; SAN→UCI
-conversion (san falls back to UCI); screenshot auto-hide below Android 14 (no public
-broadcast — use FLAG_SECURE / ScreenCaptureDetector on API 34+).
-
-## Backend analyze service (optional)
-
-The repo also contains `server.py`, a Flask + python-chess + Stockfish analyze HTTP server
-(`POST /analyze` with a FEN). It is the server-side counterpart mentioned in
-`README_SECURITY.md`. It needs a Stockfish binary on the host (`STOCKFISH_PATH`) and is not
-required by the Android app (the app uses its own local engine).
-
-Run it (on a host that has stockfish installed):
-```
-pip install python-chess flask
-STOCKFISH_PATH=/usr/bin/stockfish python server.py
-```
+- **One engine interface** (`ChessEngine`): `StockfishEngine` (UCI subprocess)
+  or `FallbackEngine` (negamax + alpha-beta in Kotlin). `EngineService` picks
+  the best available and silently degrades if Stockfish fails at runtime.
+- **Evaluation convention**: everything is *white point-of-view* (`TopMove`,
+  `EngineAnalysis`); the overlay converts to the player's perspective.
+- **UI is fully programmatic** (no XML layouts) — one less layer to break.
+- The web reader posts JSON to `window.ChessHelper.onBoard(json)` (Android) and
+  `window.webkit…fenBridge` (iOS) so the same `reader.js` serves both platforms.
 
 ## Security / fair play
 
-See `README_SECURITY.md`. This helper is for analysis/review; using engine assistance during
-live online games violates Chess.com's Terms of Service and can get your account banned.
-Stealth mode is on by default; use responsibly.
+See `README_SECURITY.md`. This helper is for analysis, review and study; using
+engine assistance during live online games violates Chess.com's Terms of Service
+and can get your account banned. The fair-play notice shows on first launch.

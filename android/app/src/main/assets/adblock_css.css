@@ -1,0 +1,48 @@
+/* adblock_css.css — hides ad slots, upsell banners, and the cookie strip on chess.com */
+
+/* Google / house ads */
+[id*="google_ads"],
+[id^="div-gpt-ad"],
+iframe[src*="doubleclick.net"],
+iframe[src*="googlesyndication"],
+ins.adsbygoogle,
+.ad-container,
+.ad-slot,
+.ads,
+.ad,
+.advertisement,
+.house-ad,
+.google-ad,
+.diamond-membership-modal,
+[data-ad-slot],
+[data-ad-unit] {
+  display: none !important;
+  height: 0 !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Chess.com specific upsell / cookie / newsletter strips */
+.cookie-banner-component,
+.cookie-consent,
+#onetrust-banner-sdk,
+.notifications-component,
+.upgrade-banner,
+.upsell-banner,
+.membership-billing-banner,
+.trial-cta,
+.diamond-upgrade,
+.premium-upgrade,
+.sidebar-ad,
+.leaderboard-ad,
+.right-rail-ad {
+  display: none !important;
+}
+
+/* Give the board more room by hiding sticky top promo bars */
+.top-banner-component,
+.header-notification,
+.marketing-banner {
+  display: none !important;
+}

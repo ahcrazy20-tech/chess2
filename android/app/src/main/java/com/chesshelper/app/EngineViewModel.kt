@@ -4,9 +4,16 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
-import java.util.concurrent.Executors
 
-enum class MoveQuality { BRILLIANT, BEST, GOOD, INACCURACY, MISTAKE, BLUNDER, NONE }
+enum class MoveQuality(val label: String) {
+    BRILLIANT("!! Brilliant"),
+    BEST("!  Best"),
+    GOOD("   Good"),
+    INACCURACY("?! Inaccuracy"),
+    MISTAKE("?  Mistake"),
+    BLUNDER("?? Blunder"),
+    NONE("")
+}
 
 enum class DetectionConfidence { HIGH, MEDIUM, LOW, UNKNOWN }
 
@@ -20,217 +27,344 @@ data class BoardPayload(
     val detectionConfidence: String    // "high" | "medium" | "low" | "unknown"
 )
 
-interface EngineListener {
-    fun onTopMoves(moves: List<TopMove>, eval: String, winChance: Double, depth: Int)
-    fun onError(msg: String)
-    fun onThinking(thinking: Boolean)
-    fun onOpening(name: String, eco: String)
-    fun onMoveQuality(quality: MoveQuality, cpLoss: Int, wasMine: Boolean, uci: String)
-}
-
 /**
- * Port of EngineViewModel.swift: debounces board ingestions, asks Stockfish,
- * computes move quality + opening, and fans results out to the UI on the main thread.
+ * Port of EngineViewModel.swift: debounces board readings from the web view,
+ * runs the engine, grades the last move (brilliant…blunder), and resolves the
+ * opening name (offline book + optional Lichess explorer).
+ *
+ * Evaluation convention: everything is WHITE point-of-view except
+ * [winChanceDisplay] helpers, which convert to the player's perspective like
+ * the iOS overlay does.
  */
 class EngineViewModel(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("chesshelper", Context.MODE_PRIVATE)
+
+    interface Listener {
+        /** Fired on the main thread whenever any engine output field changes. */
+        fun onEngineStateChanged()
+    }
+
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("chesshelper", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
-    private val bg = Executors.newSingleThreadExecutor()
 
-    var listener: EngineListener? = null
+    var listener: Listener? = null
 
-    // Engine outputs
+    // ---- Engine outputs (WHITE POV) ----
     var currentFEN: String = ""
+        private set
     var topMoves: List<TopMove> = emptyList()
-    var evaluation: String = "—"
-    var winChance: Double = 50.0
+        private set
+    var bestMoveSan: String = ""
+        private set
+    var bestMoveUci: String = ""
+        private set
+    var ponderSan: String = ""
+        private set
+    var evaluation: String = "—"          // white POV ("+0.34" / "M3")
+        private set
+    var winChance: Double = 50.0          // white POV 0..100
+        private set
     var depth: Int = 0
+        private set
+    var pvText: String = ""
+        private set
     var isThinking: Boolean = false
+        private set
     var errorMessage: String = ""
+        private set
 
-    // Detection state
+    // ---- Detection state ----
     var detectedPlayerColor: String = "w"
     var manualPlayerColor: String? = null
     var sideToMove: String = "w"
+        private set
     var lastMoveUci: String = ""
+        private set
     var plyCount: Int = -1
+        private set
     var confidence: DetectionConfidence = DetectionConfidence.UNKNOWN
-    val sanHistory: MutableList<String> = mutableListOf()
+        private set
 
-    // Move quality
+    // ---- Move quality ----
     var lastMoveQuality: MoveQuality = MoveQuality.NONE
+        private set
     var lastMoveCentipawnLoss: Int = 0
+        private set
     var lastMoveWasMine: Boolean = false
+        private set
 
-    // Opening
+    // ---- Opening ----
     var openingName: String = ""
-    var openingECO: String = ""
+        private set
+    var openingEco: String = ""
+        private set
+    var openingMoves: List<LichessExplorer.PopularMove> = emptyList()
+        private set
 
-    // Controls
+    // ---- Controls ----
     var enabled: Boolean = true
 
-    val bestMove: TopMove? get() = topMoves.firstOrNull()
+    /** SAN history maintained from the reader's UCI moves (for the local book). */
+    private val sanHistory = ArrayList<String>()
+    private var lastBoard: Board? = null
+
+    private var previousEvalWhitePov: Double? = null
+    private var lastAnalyzedFen: String = ""
+    private var analysisSeq = 0
+    private var openingSeq = 0
+    private var debounceRunnable: Runnable? = null
+
     val effectivePlayerColor: String get() = manualPlayerColor ?: detectedPlayerColor
     val isMyTurn: Boolean get() = effectivePlayerColor == sideToMove
 
-    private var lastAnalyzedFEN: String = ""
-    private var previousEvalWhitePOV: Double? = null
-    private var debounceRunnable: Runnable? = null
-    private var analysisRunnable: Runnable? = null
-    private var analysisCancelled = false
+    /** Win chance from MY point of view (0..100). */
+    fun myWinChance(): Double =
+        if (effectivePlayerColor == "w") winChance else 100.0 - winChance
+
+    /** Evaluation string from MY point of view ("+0.34" / "-M2"). */
+    fun evalDisplay(): String {
+        val e = evaluation
+        if (e.startsWith("M") || e.startsWith("-M")) {
+            val mine = if (effectivePlayerColor == "w") !e.startsWith("-") else e.startsWith("-")
+            return if (mine) e.trimStart('-') else "-${e.trimStart('-')}"
+        }
+        val v = e.toDoubleOrNull() ?: return e
+        val mine = if (effectivePlayerColor == "w") v else -v
+        return String.format("%+.2f", mine)
+    }
 
     fun setManualColor(color: String?) {
         manualPlayerColor = color
-        if (!currentFEN.isEmpty()) queueAnalyze(currentFEN, immediate = true)
+        if (currentFEN.isNotEmpty()) queueAnalyze(currentFEN, immediate = true)
+        fire()
     }
 
     fun flipColor() {
         setManualColor(if (effectivePlayerColor == "w") "b" else "w")
     }
 
-    /** Called by the web view when it reads a board from chess.com (port of ingest()). */
+    // ------------------------------------------------------------------
+    // Ingest (from the web view reader)
+    // ------------------------------------------------------------------
+
     fun ingest(payload: BoardPayload) {
         if (!enabled) return
 
         sideToMove = payload.sideToMove
         lastMoveUci = payload.lastMoveUci
         plyCount = payload.plyCount
-        confidence = parseConfidence(payload.detectionConfidence)
-
+        confidence = when (payload.detectionConfidence.lowercase()) {
+            "high" -> DetectionConfidence.HIGH
+            "medium" -> DetectionConfidence.MEDIUM
+            "low" -> DetectionConfidence.LOW
+            else -> DetectionConfidence.UNKNOWN
+        }
         if (payload.flippedConfident) {
             detectedPlayerColor = if (payload.flipped) "b" else "w"
         }
 
-        val fenBoard = buildFENBoard(payload.grid)
+        val fenBoard = buildFenBoard(payload.grid)
         val castling = deriveCastlingRights(payload.grid)
+        val ep = deriveEpTarget(payload.grid, payload.lastMoveUci)
         val fullmove = maxOf(1, (payload.plyCount / 2) + 1)
-        val fen = "$fenBoard ${payload.sideToMove} $castling - 0 $fullmove"
+        val fen = "$fenBoard ${payload.sideToMove} $castling $ep 0 $fullmove"
 
         if (fen != currentFEN) {
             currentFEN = fen
+            trackSanHistory(fen, payload)
             queueAnalyze(fen)
+        } else {
+            fire()
         }
     }
 
+    /** Keep a SAN record of the game so the offline opening book can match. */
+    private fun trackSanHistory(fen: String, payload: BoardPayload) {
+        val board = try {
+            Board.fromFEN(fen)
+        } catch (e: Exception) {
+            return
+        }
+        // Detect a fresh game.
+        if (payload.plyCount in 0..1) {
+            sanHistory.clear()
+            lastBoard = null
+        }
+        val prev = lastBoard
+        if (prev != null && payload.lastMoveUci.length >= 4) {
+            // The last move was played by the side NOT to move on the new board.
+            val moverWhite = board.whiteToMove == false
+            val work = prev.copy()
+            work.whiteToMove = moverWhite
+            val mv = work.parseUCI(payload.lastMoveUci)
+            if (mv != null) {
+                sanHistory.add(work.toSAN(mv))
+            }
+        }
+        lastBoard = board
+    }
+
+    // ------------------------------------------------------------------
+    // Analysis
+    // ------------------------------------------------------------------
+
     private fun queueAnalyze(fen: String, immediate: Boolean = false) {
-        handler.removeCallbacks(debounceRunnable)
-        debounceRunnable = Runnable {
-            runAnalysis(fen)
-        }
-        if (immediate) {
-            debounceRunnable?.run()
-        } else {
-            debounceRunnable?.let { handler.postDelayed(it, 300) }
-        }
+        debounceRunnable?.let { handler.removeCallbacks(it) }
+        val r = Runnable { runAnalysis(fen) }
+        debounceRunnable = r
+        if (immediate) r.run() else handler.postDelayed(r, 300)
     }
 
     private fun runAnalysis(fen: String) {
-        if (fen == lastAnalyzedFEN) return
-        lastAnalyzedFEN = fen
+        if (fen == lastAnalyzedFen) return
+        lastAnalyzedFen = fen
 
-        analysisCancelled = false
-        analysisRunnable = Runnable {
-            try {
-                val userDepth = prefs.getInt("engineDepth", 20)
-                val userMovetime = prefs.getInt("engineMovetime", 2000)
-                val userMultiPV = prefs.getInt("multiPV", 3)
-                if (analysisCancelled) return@execute
-                val d = if (userDepth > 0) userDepth else 20
-                val mt = if (userMovetime > 0) userMovetime else 2000
-                val mpv = if (userMultiPV > 0) userMultiPV else 3
-
-                StockfishEngine.analyze(
-                    fen = fen, multiPV = mpv, depth = d, movetimeMs = mt,
-                    onResult = { analysis ->
-                        handler.post {
-                            if (analysis.topMoves.isEmpty()) return@post
-                            topMoves = analysis.topMoves
-                            evaluation = analysis.bestMove?.evalString ?: "—"
-                            winChance = analysis.bestMove?.winChance ?: 50.0
-                            depth = analysis.depth
-                            isThinking = false
-                            errorMessage = ""
-
-                            val whitePOV = evalToWhitePOV(analysis.bestMove)
-                            computeMoveQuality(currentEvalWhitePOV = whitePOV)
-                            previousEvalWhitePOV = whitePOV
-                            updateOpening()
-
-                            listener?.onTopMoves(topMoves, evaluation, winChance, depth)
-                        }
-                    },
-                    onError = { e ->
-                        handler.post {
-                            errorMessage = "Engine: ${e.message}"
-                            isThinking = false
-                            listener?.onError(errorMessage)
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                handler.post {
-                    errorMessage = "Engine: ${e.message}"
-                    isThinking = false
-                    listener?.onError(errorMessage)
-                }
-            }
-        }
+        analysisSeq += 1
+        val seq = analysisSeq
         isThinking = true
         errorMessage = ""
-        handler.post { listener?.onThinking(true) }
-        analysisRunnable?.let { bg.execute(it) }
+        fire()
+
+        val depthPref = prefs.getInt("engineDepth", 20)
+        val movetimePref = prefs.getInt("engineMovetime", 2000)
+        val multiPvPref = prefs.getInt("multiPV", 3)
+
+        Thread({
+            val analysis = EngineService.analyzeBlocking(
+                fen = fen,
+                multiPV = multiPvPref.coerceIn(1, 5),
+                depth = depthPref.coerceIn(10, 25),
+                movetimeMs = movetimePref.coerceIn(200, 5000)
+            )
+            handler.post {
+                if (seq != analysisSeq) return@post   // stale
+                isThinking = false
+                if (analysis == null) {
+                    errorMessage = "Engine: no analysis returned"
+                    fire()
+                    return@post
+                }
+                applyAnalysis(fen, analysis)
+            }
+        }, "engine-vm").apply { isDaemon = true; start() }
+
+        // Opening lookup in parallel.
+        lookupOpening(fen, sanHistory.toList())
     }
 
-    private fun evalToWhitePOV(move: TopMove?): Double {
-        if (move == null) return 0.0
-        val mate = move.mateIn
-        if (mate != null && mate != 0) return if (mate > 0) 30.0 else -30.0
-        val cp = (move.evaluationCp ?: 0) / 100.0
-        return if (sideToMove == "w") cp else -cp
+    private fun applyAnalysis(fen: String, analysis: EngineAnalysis) {
+        topMoves = analysis.topMoves
+        val best = analysis.bestMove
+        if (best != null) {
+            bestMoveUci = best.uci
+            bestMoveSan = sanOf(fen, best.uci)
+            ponderSan = sanOf(fen, analysis.ponder, opposite = true)
+            evaluation = best.evalString
+            winChance = best.winChance
+        }
+        depth = analysis.depth
+        pvText = analysis.topMoves.firstOrNull()?.pv?.take(80) ?: ""
+        errorMessage = ""
+
+        val evalWhitePov = evalStringToWhitePov(evaluation)
+        computeMoveQuality(evalWhitePov)
+        previousEvalWhitePov = evalWhitePov
+        fire()
     }
 
-    private fun computeMoveQuality(currentEvalWhitePOV: Double) {
-        val prev = previousEvalWhitePOV
+    /** Convert a UCI move to SAN using the position [fen]. */
+    private fun sanOf(fen: String, uci: String, opposite: Boolean = false): String {
+        if (uci.isEmpty()) return ""
+        return try {
+            val board = Board.fromFEN(fen)
+            if (opposite) board.whiteToMove = !board.whiteToMove
+            val mv = board.parseUCI(uci) ?: return uci
+            val san = board.toSAN(mv)
+            if (san.isEmpty()) uci else san
+        } catch (e: Exception) {
+            uci
+        }
+    }
+
+    private fun evalStringToWhitePov(s: String): Double {
+        if (s.startsWith("M")) return 30.0
+        if (s.startsWith("-M")) return -30.0
+        return s.toDoubleOrNull() ?: 0.0
+    }
+
+    private fun computeMoveQuality(currentEvalWhitePov: Double) {
+        val prev = previousEvalWhitePov
         if (prev == null || lastMoveUci.isEmpty()) {
             lastMoveQuality = MoveQuality.NONE
             lastMoveCentipawnLoss = 0
             return
         }
-        val sideMultiplier = if (sideToMove == "w") -1.0 else 1.0
-        val lossPawns = (prev - currentEvalWhitePOV) * sideMultiplier
-        val lossCP = (lossPawns * 100).roundToInt()
+        // Side that just moved: opposite of side to move.
+        val sideThatJustMoved = if (sideToMove == "w") -1.0 else 1.0
+        val lossPawns = (prev - currentEvalWhitePov) * sideThatJustMoved
+        val lossCP = Math.round(lossPawns * 100.0).toInt()
         lastMoveCentipawnLoss = maxOf(0, lossCP)
+
         val mover = if (sideToMove == "w") "b" else "w"
-        lastMoveWasMine = (mover == effectivePlayerColor)
+        lastMoveWasMine = mover == effectivePlayerColor
 
         lastMoveQuality = when {
             lossCP < -30 -> MoveQuality.BRILLIANT
-            lossCP in 0..15 -> MoveQuality.BEST
-            lossCP in 16..49 -> MoveQuality.GOOD
-            lossCP in 50..99 -> MoveQuality.INACCURACY
-            lossCP in 100..299 -> MoveQuality.MISTAKE
+            lossCP <= 15 -> MoveQuality.BEST
+            lossCP <= 49 -> MoveQuality.GOOD
+            lossCP <= 99 -> MoveQuality.INACCURACY
+            lossCP <= 299 -> MoveQuality.MISTAKE
             else -> MoveQuality.BLUNDER
         }
-        listener?.onMoveQuality(lastMoveQuality, lastMoveCentipawnLoss, lastMoveWasMine, lastMoveUci)
     }
 
-    private fun updateOpening() {
-        val info = OpeningBook.match(sanHistory)
-        if (info != null) {
-            openingName = info.name
-            openingECO = info.eco
-        } else {
-            openingName = ""
-            openingECO = ""
+    private fun lookupOpening(fen: String, history: List<String>) {
+        openingSeq += 1
+        val seq = openingSeq
+
+        // Local book first (instant).
+        val local = OpeningBook.match(history)
+        handler.post {
+            if (seq != openingSeq) return@post
+            if (local != null) {
+                openingName = local.name
+                openingEco = local.eco
+            }
+            fire()
         }
+
+        // Network explorer (best effort).
+        Thread({
+            val info = LichessExplorer.lookup(fen)
+            handler.post {
+                if (seq != openingSeq) return@post
+                if (info != null) {
+                    if (info.name.isNotEmpty()) {
+                        openingName = info.name
+                        openingEco = info.eco
+                    }
+                    openingMoves = info.topMoves
+                } else {
+                    openingMoves = emptyList()
+                }
+                fire()
+            }
+        }, "opening-lookup").apply { isDaemon = true; start() }
     }
 
-    // ---- FEN helpers (port of the Swift private funcs) ----
+    private fun fire() {
+        handler.post { listener?.onEngineStateChanged() }
+    }
 
-    private fun buildFENBoard(grid64: String): String {
+    // ------------------------------------------------------------------
+    // FEN helpers (port of the Swift private funcs) + one upgrade:
+    // en-passant is derived from the last move when possible.
+    // ------------------------------------------------------------------
+
+    private fun buildFenBoard(grid64: String): String {
         val chars = grid64.toCharArray()
         if (chars.size != 64) return "8/8/8/8/8/8/8/8"
-        val rows = mutableListOf<String>()
+        val rows = ArrayList<String>(8)
         for (r in 0 until 8) {
             var row = ""
             var empty = 0
@@ -265,15 +399,23 @@ class EngineViewModel(context: Context) {
         return if (s.isEmpty()) "-" else s
     }
 
-    private fun parseConfidence(s: String): DetectionConfidence = when (s.lowercase()) {
-        "high" -> DetectionConfidence.HIGH
-        "medium" -> DetectionConfidence.MEDIUM
-        "low" -> DetectionConfidence.LOW
-        else -> DetectionConfidence.UNKNOWN
+    /** Derive an en-passant square from a double pawn push (upgrade over iOS). */
+    private fun deriveEpTarget(grid64: String, lastMoveUci: String): String {
+        if (lastMoveUci.length < 4) return "-"
+        val chars = grid64.toCharArray()
+        if (chars.size != 64) return "-"
+        val from = Board.squareIndex(lastMoveUci.substring(0, 2)) ?: return "-"
+        val to = Board.squareIndex(lastMoveUci.substring(2, 4)) ?: return "-"
+        val piece = chars[to]
+        val delta = to - from
+        if ((piece == 'P' && delta == 16) || (piece == 'p' && delta == -16)) {
+            return Board.squareName((from + to) / 2)
+        }
+        return "-"
     }
 
     fun destroy() {
-        handler.removeCallbacks(debounceRunnable)
-        StockfishEngine.destroy()
+        debounceRunnable?.let { handler.removeCallbacks(it) }
+        handler.removeCallbacksAndMessages(null)
     }
 }

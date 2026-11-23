@@ -10,193 +10,258 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Local Stockfish (19) over UCI, bundled as an arm64 asset.
- * Port of StockfishEngine.swift — runs entirely on-device, zero network.
+ * Local Stockfish over UCI. Fixes two things versus the iOS-era scaffold:
+ *
+ *  1. The binary is loaded from `nativeLibraryDir/libstockfish.so` (packed as a
+ *     JNI library with legacy packaging so it is extracted with exec permission).
+ *     Since Android 10, binaries in the writable app-data dir cannot be
+ *     executed when targeting API 29+, so the old `filesDir/stockfish` approach
+ *     no longer works on modern devices — we keep it only as a last resort.
+ *  2. UCI scores are converted to WHITE point-of-view at ingestion time
+ *     (UCI reports from the side-to-move's POV), so the whole app can use one
+ *     consistent convention (see TopMove).
+ *
+ * If the binary is missing or crashes, [isAvailable] is false and
+ * EngineViewModel falls back to [FallbackEngine] automatically.
  */
-object StockfishEngine {
+object StockfishEngine : ChessEngine {
+
+    override val name: String get() = "Stockfish 19"
+
     private const val TAG = "StockfishEngine"
-    private const val ASSET_NAME = "stockfish"
-    private const val UCI_OK = "uciok"
-    private const val READY_OK = "readyok"
+    private const val LIB_NAME = "libstockfish.so"
 
     private var process: Process? = null
     private var writer: BufferedWriter? = null
-    private var reader: BufferedReader? = null
     private var readerThread: Thread? = null
-    private val executor = Executors.newSingleThreadExecutor()
     private val lineListeners = Collections.synchronizedList(mutableListOf<(String) -> Unit>())
+    private val pendingLock = Any()
     private var pendingAnalysis: CompletableFuture<EngineAnalysis>? = null
     private val mvBuckets = Collections.synchronizedMap(mutableMapOf<Int, TopMove>())
+    private val pvBuckets = Collections.synchronizedMap(mutableMapOf<Int, String>())
     private var currentDepth = 0
-    private val lock = Any()
+    private var pendingSideToMoveWhite = true
+    private var binaryPath: String? = null
 
-    private var contextRef: Context? = null
-
-    /** Copy the stockfish binary from assets into the app's private files dir and chmod +x. */
+    /** Locate (and if needed extract) the engine binary. */
     fun init(context: Context) {
-        contextRef = context
-        val bin = File(context.filesDir, ASSET_NAME)
-        if (!bin.exists()) {
-            context.assets.open(ASSET_NAME).use { input ->
-                FileOutputStream(bin).use { output -> input.copyTo(output) }
+        val native = File(context.applicationInfo.nativeLibraryDir, LIB_NAME)
+        val legacy = File(context.filesDir, "stockfish")
+        binaryPath = when {
+            native.exists() && native.canExecute() -> native.absolutePath
+            native.exists() -> {
+                native.setExecutable(true, false)
+                native.absolutePath
             }
-            bin.setExecutable(true, false)
+            legacy.exists() -> {
+                legacy.setExecutable(true, false)
+                legacy.absolutePath
+            }
+            else -> {
+                // Last resort: copy from assets (legacy layout).
+                try {
+                    context.assets.open("stockfish").use { input ->
+                        FileOutputStream(legacy).use { out -> input.copyTo(out) }
+                    }
+                    legacy.setExecutable(true, false)
+                    legacy.absolutePath
+                } catch (e: Exception) {
+                    null
+                }
+            }
         }
     }
 
-    fun start(onLine: (String) -> Unit) {
-        stopInternal()
-        val ctx = contextRef ?: throw IllegalStateException("StockfishEngine.init(Context) not called")
-        val bin = File(ctx.filesDir, ASSET_NAME)
-        require(bin.exists()) { "Stockfish binary missing at ${bin.absolutePath} — see BUILD-ANDROID.md" }
+    /** True when a usable engine binary exists on this device. */
+    fun isAvailable(): Boolean {
+        val p = binaryPath ?: return false
+        return File(p).exists()
+    }
 
-        process = ProcessBuilder(bin.absolutePath).redirectErrorStream(true).start()
-        writer = BufferedWriter(OutputStreamWriter(process!!.outputStream, "UTF-8"))
-        reader = BufferedReader(InputStreamReader(process!!.inputStream, "UTF-8"))
+    private fun ensureStarted(threads: Int, hashMb: Int) {
+        synchronized(pendingLock) {
+            if (process != null) return
+            val path = binaryPath ?: throw IllegalStateException("engine binary not found")
+            val proc = ProcessBuilder(path)
+                .redirectErrorStream(true)
+                .start()
+            process = proc
+            writer = BufferedWriter(OutputStreamWriter(proc.outputStream, "UTF-8"))
 
-        readerThread = Thread({
-            try {
-                var line: String?
-                while { line = reader!!.readLine(); line != null } do {
-                    val trimmed = line.trim()
-                    Log.d(TAG, "< $trimmed")
-                    synchronized(lock) {
-                        lineListeners.forEach { it(trimmed) }
-                        handleLine(trimmed)
+            val t = Thread({
+                try {
+                    val rd = BufferedReader(InputStreamReader(proc.inputStream, "UTF-8"))
+                    var line: String?
+                    while (rd.readLine().also { line = it } != null) {
+                        val trimmed = line!!.trim()
+                        synchronized(pendingLock) {
+                            handleLine(trimmed)
+                            lineListeners.toList().forEach { it(trimmed) }
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "stockfish reader ended: ${e.message}")
                 }
-            } catch (e: Exception) {
-                if (!(e is InterruptedException)) Log.w(TAG, "stockfish reader ended", e)
-            }
-        }, "stockfish-reader").apply { isDaemon = true; start() }
+            }, "stockfish-reader")
+            t.isDaemon = true
+            t.start()
+            readerThread = t
 
-        lineListeners.add(onLine)
-        send("uci")
-        waitFor(UCI_OK, 5000)
-        send("isready")
-        waitFor(READY_OK, 5000)
-        send("setoption name Threads value 3")
-        send("setoption name Hash value 64")
-        send("setoption name MultiPV value 3")
+            send("uci")
+            waitFor("uciok", 5000)
+            send("isready")
+            waitFor("readyok", 5000)
+            send("setoption name Threads value ${threads.coerceIn(1, 8)}")
+            send("setoption name Hash value ${hashMb.coerceIn(16, 512)}")
+            send("isready")
+            waitFor("readyok", 5000)
+            Log.i(TAG, "started from $path (threads=$threads hash=$hashMb)")
+        }
     }
 
     private fun handleLine(line: String) {
         if (line.startsWith("bestmove")) {
-            val rest = line.substringAfter("bestmove").trim()
-            val bestUci = rest.split("\\s+".toRegex()).firstOrNull() ?: ""
+            val parts = line.split(Regex("\\s+"))
+            val bestUci = parts.getOrElse(1) { "" }
+            val ponder = if (parts.size >= 4 && parts[2] == "ponder") parts[3] else ""
             val sorted = mvBuckets.entries.sortedBy { it.key }
             val topMoves = sorted.mapIndexed { i, kv ->
-                TopMove(
-                    rank = i + 1,
-                    uci = kv.value.uci,
-                    san = kv.value.san,
-                    evaluationCp = kv.value.evaluationCp,
-                    mateIn = kv.value.mateIn,
-                    depth = kv.value.depth
-                )
+                kv.value.copy(rank = i + 1, pv = pvBuckets[kv.key] ?: kv.value.pv)
             }
-            val analysis = EngineAnalysis(topMoves, topMoves.firstOrNull(), currentDepth)
-            pendingAnalysis?.complete(analysis)
+            // Make sure the engine's chosen move is present even if no info arrived.
+            val finalMoves = if (topMoves.isEmpty() && bestUci != "(none)") {
+                listOf(TopMove(1, bestUci, bestUci, 0, null, currentDepth, ponder))
+            } else {
+                topMoves.map {
+                    if (it.uci == bestUci && ponder.isNotEmpty() && it.pv.isEmpty())
+                        it.copy(pv = ponder) else it
+                }
+            }
+            val analysis = EngineAnalysis(finalMoves, finalMoves.firstOrNull(), currentDepth, ponder)
+            val pending = pendingAnalysis
             pendingAnalysis = null
             mvBuckets.clear()
+            pvBuckets.clear()
             currentDepth = 0
-        } else if (line.startsWith("info")) {
+            pending?.complete(analysis)
+        } else if (line.startsWith("info") && line.contains(" pv ")) {
             val multipv = intAfter("multipv", line) ?: 1
-            currentDepth = maxOf(currentDepth, intAfter("depth", line) ?: 0)
-            val firstMove = tokenAfter("pv", line) ?: ""
+            val depth = intAfter("depth", line) ?: 0
+            if (depth > currentDepth) currentDepth = depth
+            val pvText = line.substring(line.indexOf(" pv ") + 4).trim()
+            val firstMove = pvText.split(Regex("\\s+")).firstOrNull() ?: ""
+            if (firstMove.isEmpty() || firstMove == "(none)") return
+
             val cp = intAfter("score cp", line)
             val mate = intAfter("score mate", line)
-            if (firstMove.isNotEmpty()) {
-                mvBuckets[multipv] = TopMove(
-                    rank = multipv, uci = firstMove, san = firstMove,
-                    evaluationCp = cp, mateIn = mate, depth = currentDepth
-                )
-            }
+            // UCI reports from the side to move — convert to white POV.
+            val sign = if (pendingSideToMoveWhite) 1 else -1
+            mvBuckets[multipv] = TopMove(
+                rank = multipv,
+                uci = firstMove,
+                san = firstMove,
+                evaluationCp = cp?.let { it * sign },
+                mateIn = mate?.let { it * sign },
+                depth = currentDepth
+            )
+            pvBuckets[multipv] = pvText
         }
     }
 
     private fun intAfter(prefix: String, line: String): Int? {
         val idx = line.indexOf(prefix)
         if (idx < 0) return null
-        val m = Regex("^(-?\\d+)").find(line.substring(idx + prefix.length).trimStart())
+        val rest = line.substring(idx + prefix.length).trimStart()
+        val m = Regex("^(-?\\d+)").find(rest)
         return m?.groups?.get(1)?.value?.toIntOrNull()
     }
 
-    private fun tokenAfter(prefix: String, line: String): String? {
-        val idx = line.indexOf(prefix)
-        if (idx < 0) return null
-        val m = Regex("^([a-h][1-8][a-h][1-8][qrbn]?)").find(line.substring(idx + prefix.length).trimStart())
-        return m?.groups?.get(1)?.value
-    }
-
-    fun send(command: String) {
-        Log.d(TAG, "> $command")
-        synchronized(lock) {
-            writer?.write(command)
-            writer?.newLine()
-            writer?.flush()
-        }
-    }
-
-    private fun waitFor(expected: String, timeoutMs: Long): Boolean {
-        val latch = CountDownLatch(1)
-        var hit = false
-        val temp: (String) -> Unit = { line ->
-            if (line.contains(expected)) { hit = true; latch.countDown() }
-        }
-        synchronized(lock) { lineListeners.add(temp) }
-        val ok = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-        synchronized(lock) { lineListeners.remove(temp) }
-        return ok
-    }
-
-    fun analyze(
-        fen: String,
-        multiPV: Int = 3,
-        depth: Int = 20,
-        movetimeMs: Int = 2000,
-        onResult: (EngineAnalysis) -> Unit,
-        onError: (Throwable) -> Unit
-    ) {
-        executor.execute {
+    private fun send(command: String) {
+        synchronized(pendingLock) {
+            val w = writer ?: return
             try {
-                synchronized(lock) {
-                    pendingAnalysis = CompletableFuture()
-                    mvBuckets.clear()
-                    currentDepth = 0
-                }
-                send("position fen $fen")
-                send("go depth $depth movetime $movetimeMs")
-                val analysis = pendingAnalysis?.get(30, TimeUnit.SECONDS)
-                    ?: throw IllegalStateException("engine returned no analysis")
-                onResult(analysis)
+                w.write(command)
+                w.newLine()
+                w.flush()
             } catch (e: Exception) {
-                onError(e)
+                Log.w(TAG, "send failed: ${e.message}")
             }
         }
     }
 
-    fun stop() { synchronized(lock) { send("stop") } }
+    private fun waitFor(expected: String, timeoutMs: Long): Boolean {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val temp: (String) -> Unit = { l -> if (l.contains(expected)) latch.countDown() }
+        lineListeners.add(temp)
+        val ok = try {
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } finally {
+            lineListeners.remove(temp)
+        }
+        return ok
+    }
 
-    fun destroy() {
-        stop()
-        synchronized(lock) {
+    override fun analyze(
+        fen: String,
+        multiPV: Int,
+        depth: Int,
+        movetimeMs: Int,
+        onResult: (EngineAnalysis) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        Thread({
+            try {
+                val cfg = ConfigHolder
+                ensureStarted(cfg.threads, cfg.hashMb)
+                val future: CompletableFuture<EngineAnalysis>
+                synchronized(pendingLock) {
+                    // Abandon any previous analysis.
+                    pendingAnalysis?.complete(EngineAnalysis(emptyList(), null, 0))
+                    future = CompletableFuture()
+                    pendingAnalysis = future
+                    mvBuckets.clear()
+                    pvBuckets.clear()
+                    currentDepth = 0
+                    pendingSideToMoveWhite = !fen.trim().endsWith(" b")
+                }
+                send("stop")
+                send("setoption name MultiPV value ${multiPV.coerceIn(1, 5)}")
+                send("position fen $fen")
+                send("go depth ${depth.coerceIn(1, 30)} movetime ${movetimeMs.coerceIn(50, 15000)}")
+                val analysis = future.get(30, TimeUnit.SECONDS)
+                onResult(analysis)
+            } catch (e: Exception) {
+                onError(e)
+            }
+        }, "stockfish-analyze").apply { isDaemon = true; start() }
+    }
+
+    override fun stop() {
+        send("stop")
+    }
+
+    override fun destroy() {
+        synchronized(pendingLock) {
+            try { send("quit") } catch (_: Exception) {}
             readerThread?.interrupt()
             readerThread = null
             try { writer?.close() } catch (_: Exception) {}
-            try { reader?.close() } catch (_: Exception) {}
             writer = null
-            reader = null
             process?.destroyForcibly()
             process = null
+            pendingAnalysis?.complete(EngineAnalysis(emptyList(), null, 0))
+            pendingAnalysis = null
+            mvBuckets.clear()
+            pvBuckets.clear()
         }
-        pendingAnalysis = null
-        mvBuckets.clear()
-        currentDepth = 0
+    }
+
+    /** Engine thread/hash settings, filled in by the view model from preferences. */
+    object ConfigHolder {
+        @Volatile var threads: Int = 3
+        @Volatile var hashMb: Int = 64
     }
 }

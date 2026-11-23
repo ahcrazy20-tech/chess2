@@ -1,8 +1,11 @@
-name: Build Android APK (S26 Ultra Optimized) — Signed
+# NOTE: this workflow lives outside .github/workflows/ in this repo because the
+# GitHub App used to push may lack the `workflows` scope. To activate CI, copy
+# this file to .github/workflows/build-apk.yml (contents are ready to run).
+name: Build Android APK (signed)
 
 on:
   push:
-    branches: [ main, arena/* ]
+    branches: [ main, 'arena/**' ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -13,9 +16,9 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build ChessHelper APK (arm64, S26 Ultra) — both flavors, signed
+    name: Build ChessHelper APK (signed release + debug)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -31,86 +34,72 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.10"
+          gradle-version: "8.9"
 
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew || true
-
-      # The release.keystore is committed at android/release.keystore (PKCS12, pass: chesshelper)
-      # For your own Play Store release, replace it with your private keystore and update storePassword in app/build.gradle.kts
-      - name: Verify signing keystore
+      - name: Ensure Gradle is available
         run: |
-          ls -lh android/release.keystore
-          openssl pkcs12 -info -in android/release.keystore -passin pass:chesshelper -nokeys 2>&1 | head -n 20 || true
+          if ! command -v gradle >/dev/null 2>&1; then
+            curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+            sudo unzip -q /tmp/gradle.zip -d /opt
+            echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
+          fi
+          gradle --version
 
-      # ——— Optional: bundle real Stockfish 16 for S26 Ultra (uncomment to enable) ———
-      # By default CI ships MOCK engine (no NDK needed, UI fully works).
-      # For ~3400 Elo, uncomment below. Takes ~4 min, needs 12 GB RAM runner.
-      # - name: Build Stockfish 16 for Android arm64 (S26 Ultra)
-      #   run: |
-      #     set -e
-      #     sudo apt-get update && sudo apt-get install -y make g++ clang
-      #     git clone --depth 1 --branch sf_16 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish
-      #     cd /tmp/stockfish/src
-      #     $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"
-      #     export NDK=$ANDROID_HOME/ndk/27.0.12077973
-      #     export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-      #     export CC=$TOOLCHAIN/bin/aarch64-linux-android33-clang++
-      #     make -j$(nproc) build ARCH=armv8 COMP=ndk COMPCC="$CC" ndk TARGET=arm64-v8a
-      #     mkdir -p $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a
-      #     cp stockfish $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libstockfish.so || cp libstockfish.so $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/ || true
-      #     ls -lh $GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/
-
-      - name: Build Debug (both flavors — helper + chess exact clone, mock engine)
-        working-directory: android
-        run: gradle assembleDebug --stacktrace
-
-      - name: Build Release (SIGNED — both flavors, via android/release.keystore)
-        working-directory: android
-        run: gradle assembleRelease --stacktrace
-
-      - name: List APKs
+      # Bundle the real Stockfish 19 engine for Android (official GitHub release
+      # binaries). It is packed as a JNI lib (libstockfish.so) so Android extracts
+      # it with exec permission — the app runs it as a UCI subprocess.
+      # If anything here fails, the app still works with its built-in engine.
+      - name: Bundle Stockfish 19 (arm64 + armv7)
         run: |
-          echo "=== APKs ==="
-          find android/app/build/outputs -name "*.apk" -type f | xargs ls -lh 2>&1 || true
-          echo "=== AABs ==="
-          find android/app/build/outputs -name "*.aab" -type f | xargs ls -lh 2>&1 || true
-          echo "=== Flavors ==="
-          ls -R android/app/build/outputs/apk 2>&1 | head -n 100
+          set -e
+          mkdir -p /tmp/sf && cd /tmp/sf
+          curl -sSL -o sf64.tar.gz https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-android-arm64-universal.tar.gz
+          curl -sSL -o sf32.tar.gz https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-android-armv7-neon.tar.gz
+          mkdir x64 x32
+          tar -xzf sf64.tar.gz -C x64 || gunzip -c sf64.tar.gz > x64/stockfish
+          tar -xzf sf32.tar.gz -C x32 || gunzip -c sf32.tar.gz > x32/stockfish
+          # The binary is the largest file in each extracted tree.
+          BIN64=$(find x64 -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+          BIN32=$(find x32 -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+          echo "arm64 binary: $BIN64"; file "$BIN64" || true
+          echo "armv7 binary: $BIN32"; file "$BIN32" || true
+          JNILIBS="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
+          mkdir -p "$JNILIBS/arm64-v8a" "$JNILIBS/armeabi-v7a"
+          cp "$BIN64" "$JNILIBS/arm64-v8a/libstockfish.so"
+          cp "$BIN32" "$JNILIBS/armeabi-v7a/libstockfish.so"
+          chmod 644 "$JNILIBS/arm64-v8a/libstockfish.so" "$JNILIBS/armeabi-v7a/libstockfish.so"
+          ls -lh "$JNILIBS"/*
 
-      - name: Upload — Helper Debug
+      - name: Build Release + Debug APK (signed)
+        working-directory: android
+        run: gradle assembleRelease assembleDebug --stacktrace
+
+      - name: Verify signatures
+        run: |
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk
+          "$BT/apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.1.0-release.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.1.0-debug.apk
+          ls -lh dist/
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-helper-debug-s26ultra-signed
-          path: android/app/build/outputs/apk/helper/debug/*.apk
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload — Chess Exact Clone Debug (looks like official Chess.com)
-        uses: actions/upload-artifact@v4
-        with:
-          name: Chess-chess-debug-s26ultra-signed-exact-clone
-          path: android/app/build/outputs/apk/chess/debug/*.apk
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload — Helper Release (SIGNED)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ChessHelper-helper-release-s26ultra-SIGNED
-          path: android/app/build/outputs/apk/helper/release/*.apk
-          if-no-files-found: warn
-          retention-days: 90
-
-      - name: Upload — Chess Exact Clone Release (SIGNED — same icon/name as Chess.com)
-        uses: actions/upload-artifact@v4
-        with:
-          name: Chess-chess-release-s26ultra-SIGNED-EXACT-CLONE
-          path: android/app/build/outputs/apk/chess/release/*.apk
-          if-no-files-found: warn
+          name: ChessHelper-APKs-signed
+          path: dist/*.apk
           retention-days: 90
 
       - name: Attach APKs to Release (on tag)
@@ -118,8 +107,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            android/app/build/outputs/apk/helper/release/*.apk
-            android/app/build/outputs/apk/chess/release/*.apk
-            android/app/build/outputs/apk/helper/debug/*.apk
-            android/app/build/outputs/apk/chess/debug/*.apk
+            dist/*.apk
           generate_release_notes: true

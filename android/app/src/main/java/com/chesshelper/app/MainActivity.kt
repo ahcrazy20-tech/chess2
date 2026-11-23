@@ -84,7 +84,7 @@ class MainActivity : Activity(),
             elevation = 10_001f
             alpha = 0.92f
             setOnClickListener {
-                val panel = overlay.view
+                val panel = this@MainActivity.overlay.view
                 panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 if (panel.visibility == View.VISIBLE) panel.bringToFront()
             }

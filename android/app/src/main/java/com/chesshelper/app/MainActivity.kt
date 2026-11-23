@@ -97,7 +97,7 @@ class MainActivity : Activity(),
                 Gravity.TOP or Gravity.END
             ).apply {
                 topMargin = dp(8)
-                endMargin = dp(8)
+                marginEnd = dp(8)
             }
         )
         BootTrace.mark(this, "OVERLAY_READY")

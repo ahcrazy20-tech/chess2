@@ -73,6 +73,33 @@ class MainActivity : Activity(),
 
         overlay = HelperOverlay(this, engine) { stealth.hide("manual") }
         overlay.attachTo(playContainer)
+
+        // Always-visible control to bring the engine panel back if it is hidden.
+        val engineToggle = Button(this).apply {
+            text = "ENGINE"
+            textSize = 12f
+            setBackgroundColor(0xCC1A1A1A.toInt())
+            setTextColor(Ui.GREEN)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            elevation = 10_001f
+            alpha = 0.92f
+            setOnClickListener {
+                val panel = overlay.view
+                panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                if (panel.visibility == View.VISIBLE) panel.bringToFront()
+            }
+        }
+        playContainer.addView(
+            engineToggle,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            ).apply {
+                topMargin = dp(8)
+                endMargin = dp(8)
+            }
+        )
         BootTrace.mark(this, "OVERLAY_READY")
 
         webView.setBoardListener(this)
@@ -199,11 +226,14 @@ class MainActivity : Activity(),
     private fun addNavButton(label: String, onClick: () -> Unit) {
         val b = Button(this)
         b.text = label
-        b.textSize = 9f
+        b.textSize = 12f
+        b.isAllCaps = false
         b.setTextColor(Ui.TEXT)
         b.setBackgroundColor(0)
         b.setGravity(Gravity.CENTER)
-        b.setPadding(0, dp(4), 0, dp(4))
+        b.typeface = Typeface.DEFAULT_BOLD
+        b.setPadding(dp(2), dp(12), dp(2), dp(12))
+        b.minHeight = dp(56)
         b.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         b.setOnClickListener { onClick() }
         topNav.addView(b)

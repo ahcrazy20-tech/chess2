@@ -28,8 +28,8 @@ GitHub Actions builds and signs both APKs on every push and on manual dispatch
 via [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml). Download
 the artifacts from the [Actions tab](../../actions/workflows/build-apk.yml):
 
-- `ChessHelper-v2.1.8-release-signed` — signed release (recommended)
-- `ChessHelper-v2.1.8-debug-signed` — signed debug build
+- `ChessHelper-v2.1.9-release-signed` — signed release (recommended)
+- `ChessHelper-v2.1.9-debug-signed` — signed debug build
 
 Install with `adb install -r ChessHelper-v2.1.2-release.apk` or just open the
 file on your phone. Full build instructions: [`android/BUILD-ANDROID.md`](android/BUILD-ANDROID.md).

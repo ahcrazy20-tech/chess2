@@ -521,5 +521,10 @@ class HelperOverlay(
         lp.marginEnd = ctx.dp(12)
         lp.bottomMargin = ctx.dp(8)
         container.addView(view, lp)
+        // WebView can draw above sibling views on some Samsung builds; make
+        // sure the helper panel stays on top and is visible by default.
+        view.visibility = View.VISIBLE
+        view.elevation = 10_000f
+        view.bringToFront()
     }
 }

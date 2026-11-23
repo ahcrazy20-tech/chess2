@@ -47,6 +47,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
             val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             val text = "=== crash $stamp thread=${t.name} ===\n$sw\n"
             crashFile()?.appendText(text)
+            appContext?.let { BootTrace.mark(it, "CRASH thread=${t.name}\n$sw") }
         } catch (ignored: Throwable) {
             // Never mask the original crash.
         }

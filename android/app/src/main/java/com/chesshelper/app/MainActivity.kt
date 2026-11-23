@@ -49,8 +49,11 @@ class MainActivity : Activity(),
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BootTrace.mark(this, "MAIN_START")
 
         // If the last run crashed, show the trace now (then clear it).
+        // The full-screen CrashReportActivity from ChessApplication is the
+        // reliable report; this dialog is kept as a fallback.
         val lastCrash = CrashHandler.readAndClear()
         if (lastCrash != null) {
             AlertDialog.Builder(this)
@@ -61,18 +64,23 @@ class MainActivity : Activity(),
         }
 
         EngineService.init(applicationContext)
+        BootTrace.mark(this, "ENGINE_INIT_DONE")
 
         engine = EngineViewModel(this)
 
         buildUi()
+        BootTrace.mark(this, "UI_BUILT")
 
         overlay = HelperOverlay(this, engine) { stealth.hide("manual") }
         overlay.attachTo(playContainer)
+        BootTrace.mark(this, "OVERLAY_READY")
 
         webView.setBoardListener(this)
         webView.loadChessCom()
+        BootTrace.mark(this, "WEBVIEW_LOADED")
 
         stealth = StealthManager(this, overlay.view, this)
+        BootTrace.mark(this, "STEALTH_READY")
 
         showTab(0)
 
@@ -82,6 +90,7 @@ class MainActivity : Activity(),
         if (!prefs.getBoolean("seenDisclaimer", false)) {
             showDisclaimer()
         }
+        BootTrace.mark(this, "UI_READY")
     }
 
     override fun onNewIntent(intent: Intent?) {

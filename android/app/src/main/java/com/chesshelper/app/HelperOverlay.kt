@@ -74,6 +74,7 @@ class HelperOverlay(
     private val errorText = Ui.text(ctx, "", 10f, Ui.RED, maxLines = 2)
 
     private val panicBtn = Button(ctx)
+    private val bodyCol = LinearLayout(ctx)
 
     init {
         buildUi()
@@ -340,8 +341,6 @@ class HelperOverlay(
         pr.setPadding(pad, 0, pad, 0)
         bodyCol.addView(pr)
     }
-
-    private val bodyCol = LinearLayout(ctx)
 
     override fun onEngineStateChanged() {
         render()

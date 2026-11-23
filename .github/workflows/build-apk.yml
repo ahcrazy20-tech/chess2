@@ -14,8 +14,6 @@ jobs:
     name: Build signed release + debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    outputs:
-      gradle_tail: ${{ steps.gradle.outputs.tail_b64 }}
 
     steps:
       - name: Checkout
@@ -65,15 +63,20 @@ jobs:
           ls -lh "$JNILIBS"/*/*
 
       - name: Build release + debug APKs
-        id: gradle
         working-directory: android
         run: |
           set +e
           gradle --no-daemon assembleRelease assembleDebug --stacktrace 2>&1 | tee /tmp/gradle-build.log
           EC=${PIPESTATUS[0]}
           echo "=== GRADLE EXIT: $EC ==="
-          tail -n 250 /tmp/gradle-build.log | base64 -w0 > /tmp/gradle-tail.b64
-          echo "tail_b64=$(cat /tmp/gradle-tail.b64)" >> "$GITHUB_OUTPUT"
+          if [ "$EC" -ne 0 ]; then
+            grep -E '^(e: |FAILURE:|Execution failed|FAILURE|error:|> Task .* FAILED|A problem occurred)' /tmp/gradle-build.log | head -n 30 | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              line=${line//$'\n'/'%0A'}
+              echo "::error title=Gradle failure::$line"
+            done
+          fi
           exit $EC
 
       - name: Upload Gradle build log

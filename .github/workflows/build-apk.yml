@@ -1,10 +1,19 @@
-name: Build Android APK (ChessHelper v2.1.4, signed)
+name: Build Android APK (ChessHelper v2.1.5, signed)
 
 on:
   push:
     branches: [ main, 'arena/**' ]
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      engine:
+        description: 'Engine to bundle (fallback = small APK, stockfish = ~160 MB)'
+        required: true
+        default: 'fallback'
+        type: choice
+        options:
+          - fallback
+          - stockfish
 
 permissions:
   contents: write
@@ -44,6 +53,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Bundle Stockfish 19 (arm64 + armv7)
+        if: github.event_name == 'workflow_dispatch' && inputs.engine == 'stockfish'
         run: |
           set -euo pipefail
           mkdir -p /tmp/sf && cd /tmp/sf
@@ -101,23 +111,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.1.4-release.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.1.4-debug.apk
+          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.1.5-release.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.1.5-debug.apk
           ls -lh dist/
 
       - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.1.4-release-signed
-          path: dist/ChessHelper-v2.1.4-release.apk
+          name: ChessHelper-v2.1.5-release-signed
+          path: dist/ChessHelper-v2.1.5-release.apk
           if-no-files-found: error
           retention-days: 90
 
       - name: Upload signed debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.1.4-debug-signed
-          path: dist/ChessHelper-v2.1.4-debug.apk
+          name: ChessHelper-v2.1.5-debug-signed
+          path: dist/ChessHelper-v2.1.5-debug.apk
           if-no-files-found: error
           retention-days: 90
 

@@ -8,8 +8,7 @@
         android:label="Chess Helper"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
-        android:usesCleartextTraffic="false"
-        android:extractNativeLibs="true">
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"

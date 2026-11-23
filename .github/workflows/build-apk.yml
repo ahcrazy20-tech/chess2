@@ -99,6 +99,17 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Save Gradle log to branch (debug only)
+        if: failure()
+        run: |
+          mkdir -p ci-debug
+          cp /tmp/gradle-build.log ci-debug/gradle-build.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f ci-debug/gradle-build.log
+          git commit -m "ci: debug gradle log [skip ci]" || true
+          git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
+
       - name: Verify no invokedynamic call sites in dex
         run: |
           set -euo pipefail

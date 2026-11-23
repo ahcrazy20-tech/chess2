@@ -4,198 +4,310 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.hardware.display.DisplayManager
-import android.media.projection.MediaProjectionManager
+import android.graphics.Typeface
 import android.os.Bundle
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
-import android.widget.*
-import androidx.appcompat.app.AppCompatActivity
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.app.Activity
 
 /**
- * Main activity. Port of ContentView.swift + PlayView.swift.
+ * Port of ContentView.swift + PlayView.swift.
  *
- * Tabs: Play (chess.com WebView + helper overlay), Review, Openings, Puzzles, Stats, Settings.
- * Stockfish 19 runs locally (arm64 asset copied to files dir). Stealth gestures hide the overlay.
+ * Tabs: Play (chess.com WebView + helper overlay), Review, Openings, Puzzles,
+ * Stats — plus Settings. Everything is built programmatically (no XML layouts),
+ * matching the iOS structure one-to-one. Stealth gestures (shake + 3-finger tap)
+ * hide the overlay instantly.
  */
-class MainActivity : AppCompatActivity(), ChessWebView.BoardListener, EngineViewModel.EngineListener, StealthManager.StealthListener {
+class MainActivity : Activity(),
+    ChessWebView.BoardListener,
+    StealthManager.StealthListener {
 
     private lateinit var webView: ChessWebView
-    private lateinit var overlay: View
-    private lateinit var tvStatus: TextView
-    private lateinit var tvBest: TextView
-    private lateinit var tvMoves: TextView
-    private lateinit var btnPanic: Button
-
+    private lateinit var overlay: HelperOverlay
     private lateinit var engine: EngineViewModel
     private lateinit var stealth: StealthManager
 
-    private val prefs by lazy { getSharedPreferences("chesshelper", Context.MODE_PRIVATE) }
-    private var mediaProjectionManager: MediaProjectionManager? = null
+    private lateinit var topNav: LinearLayout
+    private lateinit var content: FrameLayout
+    private lateinit var playContainer: PanicFrameLayout
+    private lateinit var bottomNav: LinearLayout
+
+    private lateinit var reviewTab: ReviewTab
+    private lateinit var openingsTab: OpeningsTab
+    private lateinit var puzzlesTab: PuzzlesTab
+    private lateinit var statsTab: StatsTab
+
+    private val tabButtons = ArrayList<Button>()
+    private val prefs: SharedPreferences by lazy {
+        getSharedPreferences("chesshelper", Context.MODE_PRIVATE)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        webView = findViewById(R.id.webView) as ChessWebView
-        overlay = findViewById(R.id.overlay) as View
-        tvStatus = findViewById(R.id.overlayStatus) as TextView
-        tvBest = findViewById(R.id.overlayBest) as TextView
-        tvMoves = findViewById(R.id.overlayMoves) as TextView
-        btnPanic = findViewById(R.id.overlayPanic) as Button
+        // If the last run crashed, show the trace now (then clear it).
+        val lastCrash = CrashHandler.readAndClear()
+        if (lastCrash != null) {
+            AlertDialog.Builder(this)
+                .setTitle("Crash report (last run)")
+                .setMessage(lastCrash.take(4000))
+                .setPositiveButton("OK", null)
+                .show()
+        }
+
+        EngineService.init(applicationContext)
 
         engine = EngineViewModel(this)
-        engine.listener = this
 
-        stealth = StealthManager(this, overlay, this)
-        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        buildUi()
 
-        // --- Wire web view <-> engine ---
+        overlay = HelperOverlay(this, engine) { stealth.hide("manual") }
+        overlay.attachTo(playContainer)
+
         webView.setBoardListener(this)
-        webView.setOnTouchListener { _, _ -> false }
+        webView.loadChessCom()
 
-        btnPanic.setOnClickListener { stealth.hide("manual") }
-
-        // Top nav bar: chess.com destinations
-        (findViewById(R.id.navHome) as Button).setOnClickListener { webView.loadChessCom() }
-        (findViewById(R.id.navOnline) as Button).setOnClickListener { webView.loadChessCom("/play/online/new") }
-        (findViewById(R.id.navBots) as Button).setOnClickListener { webView.loadChessCom("/play/computer") }
-        (findViewById(R.id.navPuzzles) as Button).setOnClickListener { webView.loadChessCom("/puzzles") }
-        (findViewById(R.id.navAnalysis) as Button).setOnClickListener { webView.loadChessCom("/analysis") }
-
-        // Bottom tab buttons
-        (findViewById(R.id.btnTabPlay) as Button).setOnClickListener { showTab(0) }
-        (findViewById(R.id.btnTabReview) as Button).setOnClickListener { showTab(1) }
-        (findViewById(R.id.btnTabOpenings) as Button).setOnClickListener { showTab(2) }
-        (findViewById(R.id.btnTabPuzzles) as Button).setOnClickListener { showTab(3) }
-        (findViewById(R.id.btnTabStats) as Button).setOnClickListener { showTab(4) }
-        (findViewById(R.id.btnTabSettings) as Button).setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
+        stealth = StealthManager(this, overlay.view, this)
 
         showTab(0)
 
-        // --- Initialize local Stockfish engine ---
-        try {
-            StockfishEngine.init(this)
-            StockfishEngine.start { line ->
-                // engine protocol trace (could be surfaced in a debug panel)
-            }
-        } catch (e: Exception) {
-            tvStatus.text = "Engine unavailable: ${e.message}"
-            tvStatus.setTextColor(0xFFF44336.toInt())
-        }
+        // Settings can ask us to force show/hide the overlay via an intent extra.
+        handleStealthIntent()
 
-        // --- Fair-play disclaimer on first launch ---
         if (!prefs.getBoolean("seenDisclaimer", false)) {
             showDisclaimer()
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // listen for screen capture (Android 14+ MediaProjection callback is wired here)
-        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        dm.registerDisplayListener(object : DisplayManager.DisplayListener {
-            override fun onDisplayAdded(displayId: Int) {}
-            override fun onDisplayRemoved(displayId: Int) {}
-            override fun onDisplayChanged(displayId: Int) {
-                // Best-effort: capture state can flip when a cast/session appears.
-                // A real implementation uses ScreenCaptureDetector (API 34+) or
-                // MediaProjectionManager.Callback; flag is exposed via setScreenCaptured.
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        handleStealthIntent()
+    }
+
+    private fun handleStealthIntent() {
+        val action = intent?.getStringExtra("stealthAction") ?: return
+        if (!::stealth.isInitialized) return
+        when (action) {
+            "show" -> stealth.show()
+            "hide" -> stealth.hide("manual")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // UI construction
+    // ------------------------------------------------------------------
+
+    private fun buildUi() {
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setBackgroundColor(Ui.SURFACE)
+
+        // Top nav: chess.com shortcuts (Play tab only).
+        topNav = LinearLayout(this)
+        topNav.orientation = LinearLayout.HORIZONTAL
+        topNav.setBackgroundColor(0xFF1A1A1A.toInt())
+        topNav.setPadding(dp(4), dp(4), dp(4), dp(4))
+        addNavButton("⌂\nHome") { webView.loadChessCom() }
+        addNavButton("🌐\nOnline") { webView.loadChessCom("/play/online/new") }
+        addNavButton("🤖\nBots") { webView.loadChessCom("/play/computer") }
+        addNavButton("🧩\nPuzzles") { webView.loadChessCom("/puzzles") }
+        addNavButton("📊\nAnalysis") { webView.loadChessCom("/analysis") }
+        root.addView(topNav)
+
+        // Content area.
+        content = FrameLayout(this)
+        val contentLp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        )
+        content.layoutParams = contentLp
+
+        playContainer = PanicFrameLayout(this)
+        playContainer.onPanic = { stealth.hide("3-finger tap") }
+        webView = ChessWebView(this)
+        playContainer.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        content.addView(playContainer)
+
+        reviewTab = ReviewTab(this)
+        openingsTab = OpeningsTab(this) { url -> openInPlay(url) }
+        puzzlesTab = PuzzlesTab(this) { url -> openInPlay(url) }
+        statsTab = StatsTab(this)
+        content.addView(reviewTab.view, fullLp())
+        content.addView(openingsTab.view, fullLp())
+        content.addView(puzzlesTab.view, fullLp())
+        content.addView(statsTab.view, fullLp())
+
+        root.addView(content)
+
+        // Bottom tab bar.
+        bottomNav = LinearLayout(this)
+        bottomNav.orientation = LinearLayout.HORIZONTAL
+        bottomNav.setBackgroundColor(0xFF1A1A1A.toInt())
+        bottomNav.setPadding(dp(4), dp(4), dp(4), dp(4))
+        val labels = listOf("Play", "Review", "Openings", "Puzzles", "Stats", "⚙ Settings")
+        for ((i, label) in labels.withIndex()) {
+            val b = Button(this)
+            b.text = label
+            b.textSize = 10f
+            b.setTextColor(Ui.TEXT)
+            b.setBackgroundColor(0)
+            b.setGravity(Gravity.CENTER)
+            b.typeface = Typeface.DEFAULT
+            b.setPadding(0, dp(6), 0, dp(6))
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            b.layoutParams = lp
+            when (i) {
+                5 -> b.setOnClickListener {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                }
+                else -> {
+                    val tab = i
+                    b.setOnClickListener { showTab(tab) }
+                }
             }
-        }, null)
+            tabButtons.add(b)
+            bottomNav.addView(b)
+        }
+        root.addView(bottomNav)
+
+        val scrollLessRoot = root
+        setContentView(scrollLessRoot)
+    }
+
+    private fun fullLp() = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+    )
+
+    private fun addNavButton(label: String, onClick: () -> Unit) {
+        val b = Button(this)
+        b.text = label
+        b.textSize = 9f
+        b.setTextColor(Ui.TEXT)
+        b.setBackgroundColor(0)
+        b.setGravity(Gravity.CENTER)
+        b.setPadding(0, dp(4), 0, dp(4))
+        b.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        b.setOnClickListener { onClick() }
+        topNav.addView(b)
+    }
+
+    /** Called by the Openings tab's "open on chess.com analysis board" button. */
+    fun openInPlay(url: String) {
+        showTab(0)
+        webView.openInPlay(url)
     }
 
     private fun showTab(index: Int) {
-        val isPlay = index == 0
-        webView.visibility = if (isPlay) View.VISIBLE else View.GONE
-        // other tabs are placeholders: hide overlay when not on Play
-        if (!isPlay) overlay.visibility = View.GONE
-    }
+        playContainer.visibility = if (index == 0) View.VISIBLE else View.GONE
+        reviewTab.view.visibility = if (index == 1) View.VISIBLE else View.GONE
+        openingsTab.view.visibility = if (index == 2) View.VISIBLE else View.GONE
+        puzzlesTab.view.visibility = if (index == 3) View.VISIBLE else View.GONE
+        statsTab.view.visibility = if (index == 4) View.VISIBLE else View.GONE
+        topNav.visibility = if (index == 0) View.VISIBLE else View.GONE
 
-    // ---- ChessWebView.BoardListener ----
-    override fun onBoard(
-        grid: String, sideToMove: String, flipped: Boolean, flippedConfident: Boolean,
-        lastMoveUci: String, plyCount: Int, confidence: String
-    ) {
-        engine.ingest(BoardPayload(grid, sideToMove, flipped, flippedConfident, lastMoveUci, plyCount, confidence))
-    }
-
-    // ---- EngineViewModel.EngineListener ----
-    override fun onTopMoves(moves: List<TopMove>, eval: String, winChance: Double, depth: Int) {
-        tvBest.text = if (moves.isEmpty()) "—" else "${moves.first().san} (${moves.first().evalString})"
-        tvMoves.text = moves.joinToString(" ") { it.uci }
-        tvStatus.text = if (engine.isMyTurn) "Your turn" else "Waiting"
-        tvStatus.setTextColor(if (engine.isMyTurn) 0xFF00C853 else 0xFFB0B0B0)
-    }
-
-    override fun onError(msg: String) {
-        tvStatus.text = msg
-        tvStatus.setTextColor(0xFFF44336.toInt())
-    }
-
-    override fun onThinking(thinking: Boolean) {
-        tvStatus.text = if (thinking) "Engine thinking…" else tvStatus.text
-    }
-
-    override fun onOpening(name: String, eco: String) {
-        if (name.isNotEmpty()) {
-            tvMoves.text = "[$eco] $name  ·  ${tvMoves.text}"
+        for ((i, b) in tabButtons.withIndex()) {
+            b.setTextColor(if (i == index) Ui.GREEN else Ui.TEXT)
         }
     }
 
-    override fun onMoveQuality(quality: MoveQuality, cpLoss: Int, wasMine: Boolean, uci: String) {
-        // Surface move quality in the overlay status for a moment.
-        val tag = if (wasMine) "You:" else "Opp:"
-        tvStatus.text = "$tag $uci · $quality${if (cpLoss >= 30) " (-$cpLoss cp)" else ""}"
+    // ------------------------------------------------------------------
+    // Board readings
+    // ------------------------------------------------------------------
+
+    override fun onBoard(payload: BoardPayload) {
+        runOnUiThread { engine.ingest(payload) }
     }
 
-    // ---- StealthManager.StealthListener ----
+    // ------------------------------------------------------------------
+    // Stealth
+    // ------------------------------------------------------------------
+
     override fun onOverlayVisibilityChanged(visible: Boolean, reason: String?) {
-        if (visible) {
-            overlay.visibility = View.VISIBLE
-        } else {
-            overlay.visibility = View.GONE
-        }
+        overlay.view.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
     override fun onScreenCaptureChanged(captured: Boolean) {
-        // UI can react here (e.g. dim the board)
+        // Could dim the board here; the overlay already auto-hides.
     }
 
-    // Wire Android 14+ screen capture: start a MediaProjection and report capture state.
-    // (Kept minimal here; call stealth.setScreenCaptured(true) from the callback.)
-    private fun requestScreenCapture() {
-        val mgr = mediaProjectionManager
-        if (mgr == null) return
-        startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001) {
-            if (resultCode == RESULT_OK && data != null) {
-                // A real implementation would create a MediaProjection here and observe
-                // stop callbacks, then call stealth.setScreenCaptured(true).
-            }
+    override fun onResume() {
+        super.onResume()
+        if (::stealth.isInitialized) {
+            stealth.autoHideBackground = prefs.getBoolean("autoHideBackground", true)
+            stealth.autoHideRecording = prefs.getBoolean("autoHideRecording", true)
+            stealth.autoHideScreenshot = prefs.getBoolean("autoHideScreenshot", true)
+            stealth.minimalMode = prefs.getBoolean("useMinimalMode", false)
         }
+    }
+
+    override fun onBackPressed() {
+        if (openingsTab.onBackPressed()) return
+        if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
+            webView.goBack()
+            return
+        }
+        super.onBackPressed()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (prefs.getBoolean("autoHideBackground", true) && ::stealth.isInitialized) {
+            stealth.hide("app backgrounded")
+        }
+    }
+
+    override fun onDestroy() {
+        engine.destroy()
+        if (::stealth.isInitialized) stealth.destroy()
+        try { webView.destroy() } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     private fun showDisclaimer() {
         AlertDialog.Builder(this)
-            .setTitle(R.string.fair_play_title)
-            .setMessage(R.string.fair_play_body)
+            .setTitle("Fair-Play Notice")
+            .setMessage(
+                "Using engine assistance during live online games violates Chess.com's " +
+                    "Terms of Service and will get your account banned.\n\n" +
+                    "Use this helper for:\n" +
+                    "• Post-game review (Review tab)\n" +
+                    "• Openings study (Openings tab)\n" +
+                    "• Puzzles (Puzzles tab)\n" +
+                    "• Playing the Computer bots\n\n" +
+                    "Stealth: shake the phone or tap with 3 fingers to hide the overlay instantly."
+            )
             .setCancelable(false)
-            .setPositiveButton(R.string.i_understand) { _, _ ->
+            .setPositiveButton("I understand") { _, _ ->
                 prefs.edit().putBoolean("seenDisclaimer", true).apply()
             }
             .show()
     }
 
-    override fun onDestroy() {
-        engine.destroy()
-        stealth.destroy()
-        StockfishEngine.destroy()
-        super.onDestroy()
+    /**
+     * Root frame that watches for 3-finger taps anywhere (including over the
+     * WebView) — the Android counterpart of the iOS ThreeFingerCatcher.
+     */
+    class PanicFrameLayout(context: Context) : FrameLayout(context) {
+        var onPanic: (() -> Unit)? = null
+
+        override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+            if (ev != null &&
+                ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN &&
+                ev.pointerCount >= 3
+            ) {
+                onPanic?.invoke()
+                return true
+            }
+            return super.dispatchTouchEvent(ev)
+        }
     }
 }

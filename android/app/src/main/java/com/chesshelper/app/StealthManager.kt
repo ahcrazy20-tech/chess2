@@ -1,30 +1,33 @@
 package com.chesshelper.app
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 
 /**
- * Port of StealthManager.swift: shake, app backgrounding and screen-capture detection
- * hide the helper overlay.
+ * Port of StealthManager.swift: shake, 3-finger tap, app backgrounding and
+ * screen-capture detection hide the helper overlay.
  *
- * Notes for Android:
+ * Android notes:
  *  - Shake (accelerometer) works on all API levels.
- *  - Backgrounding is detected via Application.ActivityLifecycleCallbacks.onStopped.
- *  - There is no public screenshot broadcast below Android 14, so screenshot auto-hide
- *    is best-effort: call setScreenCaptured(true) from a MediaProjection /
- *    ScreenCaptureDetector callback (Android 14+) where available.
+ *  - Backgrounding is detected via ActivityLifecycleCallbacks.onActivityStopped
+ *    and MainActivity.onPause (per the autoHideBackground preference).
+ *  - There is no public screenshot broadcast on Android; screenshot auto-hide is
+ *    wired through [setScreenCaptured] where a detector is available (e.g. the
+ *    MediaProjection callback on Android 14+).
  */
 class StealthManager(
     context: Context,
     private val overlayView: View,
-    listener: StealthListener
+    private val listener: StealthListener
 ) : SensorEventListener {
 
     interface StealthListener {
@@ -38,32 +41,46 @@ class StealthManager(
     var isBeingRecorded: Boolean = false
         private set
     var lastHideReason: String = ""
+        private set
 
-    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    // Preference-driven behavior (synced from Settings in MainActivity.onResume).
+    var autoHideBackground: Boolean = true
+    var autoHideRecording: Boolean = true
+    var autoHideScreenshot: Boolean = true
+
+    private val sensorManager =
+        context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val shakeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     private val handler = Handler(Looper.getMainLooper())
 
     private var lastShakeTime = 0L
-    private val shakeThreshold = 16.0          // m/s^2, tunable
+    private val shakeThreshold = 16.0
     private var lastUpdate = 0L
-    private var lastX = 0f; private var lastY = 0f; private var lastZ = 0f
+    private var lastX = 0f
+    private var lastY = 0f
+    private var lastZ = 0f
+
+    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityCreated(a: Activity, b: Bundle?) {}
+        override fun onActivityStarted(a: Activity) {}
+        override fun onActivityResumed(a: Activity) {}
+        override fun onActivityPaused(a: Activity) {}
+        override fun onActivityStopped(a: Activity) {
+            if (autoHideBackground) hide("app backgrounded")
+        }
+        override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+        override fun onActivityDestroyed(a: Activity) {}
+    }
 
     init {
         applyVisibility()
-        sensorManager.registerListener(this, shakeSensor, SensorManager.SENSOR_DELAY_UI)
-        if (context.applicationContext is Application) {
-            (context.applicationContext as Application).registerActivityLifecycleCallbacks(lifecycle)
+        shakeSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
-    }
-
-    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
-        override fun onActivityStarted(a: android.app.Activity) {}
-        override fun onActivityResumed(a: android.app.Activity) {}
-        override fun onActivityPaused(a: android.app.Activity) {}
-        override fun onActivityStopped(a: android.app.Activity) { /* hide when app backgrounds */ }
-        override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
-        override fun onActivityDestroyed(a: android.app.Activity) {}
+        val app = context.applicationContext
+        if (app is Application) {
+            app.registerActivityLifecycleCallbacks(lifecycle)
+        }
     }
 
     fun toggleOverlay() {
@@ -90,8 +107,11 @@ class StealthManager(
     }
 
     private fun applyVisibility() {
-        overlayView.visibility = if (overlayVisible) View.VISIBLE else View.GONE
-        handler.post { listener.onOverlayVisibilityChanged(overlayVisible, lastHideReason) }
+        val visible = overlayVisible
+        handler.post {
+            overlayView.visibility = if (visible) View.VISIBLE else View.GONE
+            listener.onOverlayVisibilityChanged(visible, lastHideReason)
+        }
     }
 
     // ---- shake detection ----
@@ -104,8 +124,9 @@ class StealthManager(
         val dx = Math.abs(event.values[0] - lastX)
         val dy = Math.abs(event.values[1] - lastY)
         val dz = Math.abs(event.values[2] - lastZ)
-        lastX = event.values[0]; lastY = event.values[1]; lastZ = event.values[2]
-        // coarse acceleration spike approximation (m/s^2 scaled)
+        lastX = event.values[0]
+        lastY = event.values[1]
+        lastZ = event.values[2]
         val speed = (dx + dy + dz) * 1000.0 / elapsedMs
         if (speed > shakeThreshold && now - lastShakeTime > 1000) {
             lastShakeTime = now
@@ -115,17 +136,23 @@ class StealthManager(
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    /** Call this from a MediaProjection / ScreenCaptureDetector callback (Android 14+). */
+    /** Call this from a MediaProjection / ScreenCaptureDetector callback. */
     fun setScreenCaptured(captured: Boolean) {
         isBeingRecorded = captured
         handler.post { listener.onScreenCaptureChanged(captured) }
-        if (captured) hide("screen capture detected")
+        if (captured && autoHideRecording) hide("screen capture detected")
+    }
+
+    /** Call this where a screenshot detector is available. */
+    fun onScreenshotDetected() {
+        if (autoHideScreenshot) hide("screenshot taken")
     }
 
     fun destroy() {
         sensorManager.unregisterListener(this)
-        if (overlayView.context.applicationContext is Application) {
-            (overlayView.context.applicationContext as Application).unregisterActivityLifecycleCallbacks(lifecycle)
+        val app = overlayView.context.applicationContext
+        if (app is Application) {
+            app.unregisterActivityLifecycleCallbacks(lifecycle)
         }
     }
 }

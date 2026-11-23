@@ -5,18 +5,15 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath "com.android.tools.build:gradle:8.4.0"
+        classpath "com.android.tools.build:gradle:8.7.3"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.25"
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+// NOTE: dependency repositories are declared in settings.gradle
+// (dependencyResolutionManagement with FAIL_ON_PROJECT_REPOS) — do NOT add
+// an allprojects { repositories { ... } } block here, it breaks that mode.
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
 }

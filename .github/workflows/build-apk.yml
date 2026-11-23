@@ -70,12 +70,14 @@ jobs:
           EC=${PIPESTATUS[0]}
           echo "=== GRADLE EXIT: $EC ==="
           if [ "$EC" -ne 0 ]; then
-            tail -n 80 /tmp/gradle-build.log | while IFS= read -r line; do
+            sed -n '/FAILURE: Build failed/,$p' /tmp/gradle-build.log \
+              | grep -vE '^[[:space:]]*at ' \
+              | head -n 30 | while IFS= read -r line; do
               [ -n "$line" ] || continue
               line=${line//'%'/'%25'}
               line=${line//$'\r'/'%0D'}
               line=${line//$'\n'/'%0A'}
-              echo "::error title=Gradle log::$line"
+              echo "::error title=Gradle failure::$line"
             done
           fi
           exit $EC

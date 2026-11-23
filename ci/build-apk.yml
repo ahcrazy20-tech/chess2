@@ -1,0 +1,111 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Source of truth for the Android build workflow.
+#
+# GitHub only runs workflows that live in `.github/workflows/`, and the Arena
+# GitHub app used by this session has no `workflows` permission, so this copy
+# lives here and must be activated once by either:
+#   1. granting the Arena GitHub app "Workflows: Read and write" and letting the
+#      agent move it, or
+#   2. creating `.github/workflows/build-apk.yml` in the GitHub web UI and
+#      pasting this file (minus this header) into it.
+# After that, every push to main / arena/** builds signed APKs automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Build Android APK (signed, arm64-v8a)
+
+on:
+  push:
+    branches: [ main, 'arena/**' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build ChessHelper APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --list_installed | sed -n '1,40p'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Verify signing keystore
+        run: |
+          set -euo pipefail
+          test -f android/keystore/chesshelper-release.p12 || { echo "missing android/keystore/chesshelper-release.p12"; exit 1; }
+          keytool -list -keystore android/keystore/chesshelper-release.p12 \
+            -storetype PKCS12 -storepass chesshelper
+
+      - name: Bundle Stockfish (arm64-v8a) as libstockfish.so
+        run: |
+          set -euo pipefail
+          DEST=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$DEST"
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/stockfish.tar.gz \
+            https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-arm64-universal.tar.gz
+          mkdir -p /tmp/sf
+          tar -xzf /tmp/stockfish.tar.gz -C /tmp/sf
+          BIN="$(find /tmp/sf -type f -name 'stockfish*' ! -name '*.txt' | head -n 1)"
+          test -n "$BIN" || { echo "stockfish binary not found in archive"; find /tmp/sf; exit 1; }
+          cp "$BIN" "$DEST/libstockfish.so"
+          chmod 755 "$DEST/libstockfish.so"
+          file "$DEST/libstockfish.so"
+          ls -lh "$DEST"
+
+      - name: Build debug + signed release
+        working-directory: android
+        run: gradle assembleDebug assembleRelease --stacktrace
+
+      - name: Collect APKs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk        dist/ChessHelper-2.0.1-debug.apk
+          cp android/app/build/outputs/apk/release/app-release.apk    dist/ChessHelper-2.0.1-release-signed.apk
+          ls -lh dist
+          # sanity: confirm the engine is inside the APK
+          unzip -l dist/ChessHelper-2.0.1-release-signed.apk | grep -i stockfish || echo "WARNING: no stockfish in apk"
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: chesshelper-apks
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach APKs to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true

@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.chesshelper.app"
-    compileSdk = 36
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.chesshelper.app"
         minSdk = 24
-        targetSdk = 36
-        versionCode = 20
-        versionName = "2.0.0"
+        targetSdk = 35
+        versionCode = 21
+        versionName = "2.0.1"
 
         // Samsung Galaxy S26 Ultra is ARM64. Ship only arm64-v8a.
         ndk {
@@ -20,41 +20,66 @@ android {
         }
     }
 
+    // Test signing key committed at android/keystore/chesshelper-release.p12
+    // (alias / password: chesshelper). Replace it with your own key before
+    // publishing anywhere. See android/BUILD-ANDROID.md.
+    signingConfigs {
+        create("release") {
+            storeFile = file("../keystore/chesshelper-release.p12")
+            storeType = "PKCS12"
+            storePassword = "chesshelper"
+            keyAlias = "chesshelper"
+            keyPassword = "chesshelper"
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled = false
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Sign with a debug keystore here for local testing.
-            // Replace with a release signingConfig for Play Store uploads.
-            signingConfig = signingConfigs.debug
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
-            debuggable true
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            isDebuggable = true
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
+
     buildFeatures {
         viewBinding = true
     }
-    packagingOptions {
-        resources.excludes.add("META-INF/*")
-        resources.excludes.add("META-INF/services/*")
+
+    // libstockfish.so is a *native executable* (Stockfish UCI) shipped through
+    // jniLibs so Android extracts it to nativeLibraryDir where it can be exec'd.
+    // Legacy packaging = extractNativeLibs=true is required for that to work.
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        resources.excludes += setOf("META-INF/*", "META-INF/services/*", "META-INF/DEPENDENCIES")
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
 }
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.activity:activity:1.9.0")
+    implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 }

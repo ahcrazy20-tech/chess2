@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity(), ChessWebView.BoardListener, EngineView
         tvBest.text = if (moves.isEmpty()) "—" else "${moves.first().san} (${moves.first().evalString})"
         tvMoves.text = moves.joinToString(" ") { it.uci }
         tvStatus.text = if (engine.isMyTurn) "Your turn" else "Waiting"
-        tvStatus.setTextColor(if (engine.isMyTurn) 0xFF00C853 else 0xFFB0B0B0)
+        tvStatus.setTextColor(if (engine.isMyTurn) 0xFF00C853.toInt() else 0xFFB0B0B0.toInt())
     }
 
     override fun onError(msg: String) {

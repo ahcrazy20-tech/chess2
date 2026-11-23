@@ -24,7 +24,7 @@ import android.view.View
 class StealthManager(
     context: Context,
     private val overlayView: View,
-    listener: StealthListener
+    private val listener: StealthListener
 ) : SensorEventListener {
 
     interface StealthListener {

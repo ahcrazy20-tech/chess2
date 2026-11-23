@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 enum class MoveQuality { BRILLIANT, BEST, GOOD, INACCURACY, MISTAKE, BLUNDER, NONE }
 
@@ -134,7 +135,7 @@ class EngineViewModel(context: Context) {
                 val userDepth = prefs.getInt("engineDepth", 20)
                 val userMovetime = prefs.getInt("engineMovetime", 2000)
                 val userMultiPV = prefs.getInt("multiPV", 3)
-                if (analysisCancelled) return@execute
+                if (analysisCancelled) return@Runnable
                 val d = if (userDepth > 0) userDepth else 20
                 val mt = if (userMovetime > 0) userMovetime else 2000
                 val mpv = if (userMultiPV > 0) userMultiPV else 3

@@ -15,12 +15,18 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Local Stockfish (19) over UCI, bundled as an arm64 asset.
- * Port of StockfishEngine.swift — runs entirely on-device, zero network.
+ * Local Stockfish (UCI) running fully on-device.
+ *
+ * The engine binary ships inside the APK as `jniLibs/arm64-v8a/libstockfish.so`
+ * (that is the only way to get an executable file on the device's native library
+ * directory — Android 10+ forbids exec'ing from the app's data dir). If the
+ * native lib is missing we fall back to copying `assets/stockfish`, which is
+ * useful for old API levels / local experiments.
  */
 object StockfishEngine {
     private const val TAG = "StockfishEngine"
     private const val ASSET_NAME = "stockfish"
+    private const val NATIVE_LIB = "libstockfish.so"
     private const val UCI_OK = "uciok"
     private const val READY_OK = "readyok"
 
@@ -37,22 +43,49 @@ object StockfishEngine {
 
     private var contextRef: Context? = null
 
-    /** Copy the stockfish binary from assets into the app's private files dir and chmod +x. */
+    /** Absolute path of the resolved engine executable, or null when unavailable. */
+    var binaryPath: String? = null
+        private set
+
+    val isAvailable: Boolean get() = binaryPath != null
+
+    /**
+     * Locate the engine binary: prefer the extracted native lib, then an
+     * executable copied from assets. Safe to call repeatedly.
+     */
     fun init(context: Context) {
         contextRef = context
-        val bin = File(context.filesDir, ASSET_NAME)
-        if (!bin.exists()) {
-            context.assets.open(ASSET_NAME).use { input ->
-                FileOutputStream(bin).use { output -> input.copyTo(output) }
+        binaryPath = resolveBinary(context)
+        Log.i(TAG, "engine binary = ${binaryPath ?: "<missing>"}")
+    }
+
+    private fun resolveBinary(context: Context): String? {
+        // 1) jniLibs payload extracted by the package manager.
+        val native = File(context.applicationInfo.nativeLibraryDir, NATIVE_LIB)
+        if (native.canExecute()) return native.absolutePath
+
+        // 2) Optional APK asset (legacy / side-loaded testing path).
+        val copied = File(context.filesDir, ASSET_NAME)
+        try {
+            if (!copied.exists()) {
+                context.assets.open(ASSET_NAME).use { input ->
+                    FileOutputStream(copied).use { output -> input.copyTo(output) }
+                }
             }
-            bin.setExecutable(true, false)
+            copied.setExecutable(true, false)
+            if (copied.canExecute() && copied.length() > 0) return copied.absolutePath
+        } catch (e: Exception) {
+            Log.w(TAG, "no usable stockfish asset", e)
         }
+        return null
     }
 
     fun start(onLine: (String) -> Unit) {
         stopInternal()
-        val ctx = contextRef ?: throw IllegalStateException("StockfishEngine.init(Context) not called")
-        val bin = File(ctx.filesDir, ASSET_NAME)
+        val path = binaryPath ?: throw IllegalStateException(
+            "Stockfish binary missing — it should be packaged as libstockfish.so"
+        )
+        val bin = File(path)
         require(bin.exists()) { "Stockfish binary missing at ${bin.absolutePath} — see BUILD-ANDROID.md" }
 
         process = ProcessBuilder(bin.absolutePath).redirectErrorStream(true).start()
@@ -61,21 +94,21 @@ object StockfishEngine {
 
         readerThread = Thread({
             try {
-                var line: String?
-                while { line = reader!!.readLine(); line != null } do {
-                    val trimmed = line.trim()
+                while (true) {
+                    val raw = reader?.readLine() ?: break
+                    val trimmed = raw.trim()
                     Log.d(TAG, "< $trimmed")
                     synchronized(lock) {
-                        lineListeners.forEach { it(trimmed) }
+                        lineListeners.toList().forEach { it(trimmed) }
                         handleLine(trimmed)
                     }
                 }
             } catch (e: Exception) {
-                if (!(e is InterruptedException)) Log.w(TAG, "stockfish reader ended", e)
+                if (e !is InterruptedException) Log.w(TAG, "stockfish reader ended", e)
             }
         }, "stockfish-reader").apply { isDaemon = true; start() }
 
-        lineListeners.add(onLine)
+        synchronized(lock) { lineListeners.add(onLine) }
         send("uci")
         waitFor(UCI_OK, 5000)
         send("isready")
@@ -88,7 +121,6 @@ object StockfishEngine {
     private fun handleLine(line: String) {
         if (line.startsWith("bestmove")) {
             val rest = line.substringAfter("bestmove").trim()
-            val bestUci = rest.split("\\s+".toRegex()).firstOrNull() ?: ""
             val sorted = mvBuckets.entries.sortedBy { it.key }
             val topMoves = sorted.mapIndexed { i, kv ->
                 TopMove(
@@ -101,22 +133,26 @@ object StockfishEngine {
                 )
             }
             val analysis = EngineAnalysis(topMoves, topMoves.firstOrNull(), currentDepth)
-            pendingAnalysis?.complete(analysis)
+            val pending = pendingAnalysis
+            pending?.complete(analysis)
             pendingAnalysis = null
             mvBuckets.clear()
             currentDepth = 0
         } else if (line.startsWith("info")) {
+            val depth = intAfter("depth", line) ?: 0
+            if (depth > currentDepth) currentDepth = depth
             val multipv = intAfter("multipv", line) ?: 1
-            currentDepth = maxOf(currentDepth, intAfter("depth", line) ?: 0)
-            val firstMove = tokenAfter("pv", line) ?: ""
+            val firstMove = tokenAfter("pv", line) ?: return
             val cp = intAfter("score cp", line)
             val mate = intAfter("score mate", line)
-            if (firstMove.isNotEmpty()) {
-                mvBuckets[multipv] = TopMove(
-                    rank = multipv, uci = firstMove, san = firstMove,
-                    evaluationCp = cp, mateIn = mate, depth = currentDepth
-                )
-            }
+            mvBuckets[multipv] = TopMove(
+                rank = multipv,
+                uci = firstMove,
+                san = firstMove,
+                evaluationCp = cp,
+                mateIn = mate,
+                depth = depth
+            )
         }
     }
 
@@ -124,31 +160,32 @@ object StockfishEngine {
         val idx = line.indexOf(prefix)
         if (idx < 0) return null
         val m = Regex("^(-?\\d+)").find(line.substring(idx + prefix.length).trimStart())
-        return m?.groups?.get(1)?.value?.toIntOrNull()
+        return m?.groupValues?.get(1)?.toIntOrNull()
     }
 
     private fun tokenAfter(prefix: String, line: String): String? {
         val idx = line.indexOf(prefix)
         if (idx < 0) return null
         val m = Regex("^([a-h][1-8][a-h][1-8][qrbn]?)").find(line.substring(idx + prefix.length).trimStart())
-        return m?.groups?.get(1)?.value
+        return m?.groupValues?.get(1)
     }
 
     fun send(command: String) {
         Log.d(TAG, "> $command")
         synchronized(lock) {
-            writer?.write(command)
-            writer?.newLine()
-            writer?.flush()
+            try {
+                writer?.write(command)
+                writer?.newLine()
+                writer?.flush()
+            } catch (e: Exception) {
+                Log.w(TAG, "failed to send '$command'", e)
+            }
         }
     }
 
     private fun waitFor(expected: String, timeoutMs: Long): Boolean {
         val latch = CountDownLatch(1)
-        var hit = false
-        val temp: (String) -> Unit = { line ->
-            if (line.contains(expected)) { hit = true; latch.countDown() }
-        }
+        val temp: (String) -> Unit = { line -> if (line.contains(expected)) latch.countDown() }
         synchronized(lock) { lineListeners.add(temp) }
         val ok = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         synchronized(lock) { lineListeners.remove(temp) }
@@ -166,10 +203,11 @@ object StockfishEngine {
         executor.execute {
             try {
                 synchronized(lock) {
-                    pendingAnalysis = CompletableFuture()
                     mvBuckets.clear()
                     currentDepth = 0
+                    pendingAnalysis = CompletableFuture()
                 }
+                send("setoption name MultiPV value $multiPV")
                 send("position fen $fen")
                 send("go depth $depth movetime $movetimeMs")
                 val analysis = pendingAnalysis?.get(30, TimeUnit.SECONDS)
@@ -181,22 +219,39 @@ object StockfishEngine {
         }
     }
 
-    fun stop() { synchronized(lock) { send("stop") } }
+    fun stop() = send("stop")
 
     fun destroy() {
-        stop()
+        stopInternal()
         synchronized(lock) {
-            readerThread?.interrupt()
-            readerThread = null
             try { writer?.close() } catch (_: Exception) {}
             try { reader?.close() } catch (_: Exception) {}
             writer = null
             reader = null
-            process?.destroyForcibly()
+            process?.destroy()
             process = null
+            lineListeners.clear()
         }
         pendingAnalysis = null
         mvBuckets.clear()
         currentDepth = 0
+    }
+
+    private fun stopInternal() {
+        synchronized(lock) {
+            try {
+                writer?.write("quit")
+                writer?.newLine()
+                writer?.flush()
+            } catch (_: Exception) {}
+            readerThread?.interrupt()
+            readerThread = null
+            process?.let { if (it.isAlive) it.destroy() }
+            process = null
+            try { writer?.close() } catch (_: Exception) {}
+            try { reader?.close() } catch (_: Exception) {}
+            writer = null
+            reader = null
+        }
     }
 }

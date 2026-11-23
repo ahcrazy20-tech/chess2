@@ -129,10 +129,10 @@ object FallbackEngine : ChessEngine {
             return if (board.inCheck(board.whiteToMove)) -(MATE - ply) else 0
         }
         // Move ordering: captures first (cheap heuristic).
-        val ordered = moves.sortedByDescending { mv ->
+        val ordered = moves.sortedWith(Cmp.byDesc { mv ->
             val victim = board.squares[mv.to]
             if (victim != '.') PIECE_VALUE[pieceIndex(victim)] else 0
-        }
+        })
         var best = Int.MIN_VALUE + 1
         var a = alpha
         for (mv in ordered) {

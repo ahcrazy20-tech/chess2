@@ -253,7 +253,7 @@ class ReviewTab(private val ctx: Context) {
             for (m in bad) {
                 val row = LinearLayout(ctx)
                 row.orientation = LinearLayout.HORIZONTAL
-                row.gravity = Gravity.CENTER_VERTICAL
+                row.setGravity(Gravity.CENTER_VERTICAL)
                 row.background = Ui.roundedBg(Ui.SURFACE_ALT, 10f)
                 row.setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8))
 

@@ -11,8 +11,8 @@ android {
         applicationId = "com.chesshelper.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "2.1.0"
+        versionCode = 22
+        versionName = "2.1.1"
 
         // Stockfish ships as a JNI library for these ABIs; the built-in
         // fallback engine covers any other device.

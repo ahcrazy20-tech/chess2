@@ -30,9 +30,9 @@ object Ui {
 
     fun roundedBg(color: Int, radiusDp: Float, strokeColor: Int = 0, strokeWidthDp: Int = 0, ctx: Context? = null): GradientDrawable {
         val d = GradientDrawable()
-        d.shape = GradientDrawable.RECTANGLE
+        d.setShape(GradientDrawable.RECTANGLE)
         d.setColor(color)
-        d.cornerRadius = radiusDp
+        d.setCornerRadius(radiusDp)
         if (strokeColor != 0 && ctx != null) {
             d.setStroke(ctx.dp(strokeWidthDp), strokeColor)
         }
@@ -41,7 +41,7 @@ object Ui {
 
     fun circleBg(color: Int): GradientDrawable {
         val d = GradientDrawable()
-        d.shape = GradientDrawable.OVAL
+        d.setShape(GradientDrawable.OVAL)
         d.setColor(color)
         return d
     }
@@ -79,7 +79,7 @@ object Ui {
         )
         t.background = bg
         t.setPadding(ctx.dp(12), ctx.dp(6), ctx.dp(12), ctx.dp(6))
-        t.gravity = Gravity.CENTER
+        t.setGravity(Gravity.CENTER)
         t.setOnClickListener { onClick() }
         return t
     }
@@ -87,7 +87,7 @@ object Ui {
     fun row(ctx: Context, vararg children: View): LinearLayout {
         val l = LinearLayout(ctx)
         l.orientation = LinearLayout.HORIZONTAL
-        l.gravity = Gravity.CENTER_VERTICAL
+        l.setGravity(Gravity.CENTER_VERTICAL)
         for (c in children) l.addView(c)
         return l
     }

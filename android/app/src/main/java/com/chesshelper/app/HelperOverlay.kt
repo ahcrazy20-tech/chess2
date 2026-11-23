@@ -112,7 +112,7 @@ class HelperOverlay(
         warnDot.text = "!"
         warnDot.textSize = 11f
         warnDot.setTextColor(Ui.YELLOW)
-        warnDot.gravity = Gravity.CENTER
+        warnDot.setGravity(Gravity.CENTER)
         warnDot.background = Ui.circleBg(0x33FFEB3B)
         val wLp = LinearLayout.LayoutParams(dp(16), dp(16))
         wLp.marginStart = dp(6)
@@ -138,7 +138,7 @@ class HelperOverlay(
 
         val header = LinearLayout(ctx)
         header.orientation = LinearLayout.HORIZONTAL
-        header.gravity = Gravity.CENTER_VERTICAL
+        header.setGravity(Gravity.CENTER_VERTICAL)
         header.addView(dot)
         header.addView(title)
         header.addView(turnPill)
@@ -156,7 +156,7 @@ class HelperOverlay(
 
         // color override row
         colorRow.orientation = LinearLayout.HORIZONTAL
-        colorRow.gravity = Gravity.CENTER_VERTICAL
+        colorRow.setGravity(Gravity.CENTER_VERTICAL)
         val lbl = Ui.text(ctx, "I'm playing:", 10f, Ui.TEXT_DIM)
         val lblLp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -188,7 +188,7 @@ class HelperOverlay(
 
         val rightCol = LinearLayout(ctx)
         rightCol.orientation = LinearLayout.VERTICAL
-        rightCol.gravity = Gravity.END
+        rightCol.setGravity(Gravity.END)
         rightCol.addView(evalLabel)
         rightCol.addView(evalValue)
         rightCol.addView(depthLabel)
@@ -225,7 +225,7 @@ class HelperOverlay(
 
         // grade row
         gradeRow.orientation = LinearLayout.HORIZONTAL
-        gradeRow.gravity = Gravity.CENTER_VERTICAL
+        gradeRow.setGravity(Gravity.CENTER_VERTICAL)
         gradeRow.addView(gradeWho)
         gradeRow.addView(gradeMove)
         val sp3 = View(ctx)
@@ -242,7 +242,7 @@ class HelperOverlay(
 
         // opening
         openingRow.orientation = LinearLayout.HORIZONTAL
-        openingRow.gravity = Gravity.CENTER_VERTICAL
+        openingRow.setGravity(Gravity.CENTER_VERTICAL)
         val bookIcon = Ui.text(ctx, "\uD83D\uDCD6", 11f, Ui.ORANGE)
         val biLp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -330,7 +330,7 @@ class HelperOverlay(
         panicBtn.setOnClickListener { onPanicHide() }
         val pr = LinearLayout(ctx)
         pr.orientation = LinearLayout.HORIZONTAL
-        pr.gravity = Gravity.END
+        pr.setGravity(Gravity.END)
         pr.addView(panicBtn)
         val prLp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -431,7 +431,7 @@ class HelperOverlay(
             for (m in engine.openingMoves.take(3)) {
                 val r = LinearLayout(ctx)
                 r.orientation = LinearLayout.HORIZONTAL
-                r.gravity = Gravity.CENTER_VERTICAL
+                r.setGravity(Gravity.CENTER_VERTICAL)
                 val san = Ui.text(ctx, m.san, 11f, Ui.CYAN, bold = true, mono = true)
                 san.layoutParams = LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT)
                 val games = Ui.text(ctx, "${m.totalGames} games", 10f, Ui.TEXT_DIM)

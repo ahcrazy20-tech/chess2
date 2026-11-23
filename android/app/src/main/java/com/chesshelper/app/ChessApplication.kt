@@ -5,7 +5,7 @@ import android.app.Application
 class ChessApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        // Intentional no-op here: Stockfish + Stealth are initialized from MainActivity
-        // once we know the arm64 stockfish asset has been copied to the app's files dir.
+        // Catch any crash before the UI starts so it can be reported next launch.
+        CrashHandler.install(this)
     }
 }

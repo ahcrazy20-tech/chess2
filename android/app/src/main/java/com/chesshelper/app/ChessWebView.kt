@@ -44,7 +44,7 @@ class ChessWebView @JvmOverloads constructor(
         settings.displayZoomControls = false
         addJavascriptInterface(InnerBridge(), "ChessHelper")
 
-        webViewClient = object : WebViewClient() {
+        setWebViewClient(object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 injectAdblock()
@@ -63,7 +63,7 @@ class ChessWebView @JvmOverloads constructor(
                 }
                 return false
             }
-        }
+        })
     }
 
     fun setBoardListener(l: BoardListener?) {

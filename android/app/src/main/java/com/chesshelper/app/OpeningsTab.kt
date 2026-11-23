@@ -144,7 +144,7 @@ class OpeningsTab(
 
             val head = LinearLayout(ctx)
             head.orientation = LinearLayout.HORIZONTAL
-            head.gravity = Gravity.CENTER_VERTICAL
+            head.setGravity(Gravity.CENTER_VERTICAL)
             head.addView(Ui.text(ctx, op.eco, 10f, Ui.ORANGE, bold = true, mono = true))
             val nameLp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -192,7 +192,7 @@ class OpeningsTab(
         back.text = "← All openings"
         back.setTextColor(Ui.TEXT_DIM)
         back.setBackgroundColor(0)
-        back.gravity = Gravity.START
+        back.setGravity(Gravity.START)
         back.setOnClickListener { showList() }
         trainerPanel.addView(back)
 

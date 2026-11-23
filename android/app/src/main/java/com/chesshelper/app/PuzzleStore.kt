@@ -72,7 +72,7 @@ object PuzzleStore {
     fun byTheme(attempts: List<PuzzleAttempt>): List<ThemeStat> {
         return attempts.groupBy { it.theme }
             .map { (theme, list) -> ThemeStat(theme, list.size, list.count { it.solved }) }
-            .sortedByDescending { it.count }
+            .sortedWith(Cmp.byDesc { it.count })
     }
 
     fun accuracy(attempts: List<PuzzleAttempt>): Double {

@@ -84,7 +84,7 @@ class PuzzlesTab(
         b.text = label
         b.setTextColor(Ui.CYAN)
         b.setBackgroundColor(0)
-        b.gravity = Gravity.START
+        b.setGravity(Gravity.START)
         b.setOnClickListener { onClick() }
         return b
     }
@@ -114,7 +114,7 @@ class PuzzlesTab(
         for (t in themes) {
             val row = LinearLayout(ctx)
             row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
+            row.setGravity(Gravity.CENTER_VERTICAL)
             row.addView(
                 Ui.text(ctx, t.theme.replaceFirstChar { it.uppercase() }, 12f, Ui.TEXT),
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -145,7 +145,7 @@ class PuzzlesTab(
         for (a in attempts.take(20)) {
             val row = LinearLayout(ctx)
             row.orientation = LinearLayout.HORIZONTAL
-            row.gravity = Gravity.CENTER_VERTICAL
+            row.setGravity(Gravity.CENTER_VERTICAL)
             val icon = Ui.text(ctx, if (a.solved) "✔" else "✘", 12f, if (a.solved) Ui.GREEN else Ui.RED, bold = true)
             val ilp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT

@@ -127,7 +127,7 @@ object StockfishEngine : ChessEngine {
             val parts = line.split(Regex("\\s+"))
             val bestUci = parts.getOrElse(1) { "" }
             val ponder = if (parts.size >= 4 && parts[2] == "ponder") parts[3] else ""
-            val sorted = mvBuckets.entries.sortedBy { it.key }
+            val sorted = mvBuckets.entries.sortedWith(Cmp.by { it.key })
             val topMoves = sorted.mapIndexed { i, kv ->
                 kv.value.copy(rank = i + 1, pv = pvBuckets[kv.key] ?: kv.value.pv)
             }

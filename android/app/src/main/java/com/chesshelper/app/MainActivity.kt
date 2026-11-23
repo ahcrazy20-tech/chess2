@@ -49,6 +49,17 @@ class MainActivity : Activity(),
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // If the last run crashed, show the trace now (then clear it).
+        val lastCrash = CrashHandler.readAndClear()
+        if (lastCrash != null) {
+            AlertDialog.Builder(this)
+                .setTitle("Crash report (last run)")
+                .setMessage(lastCrash.take(4000))
+                .setPositiveButton("OK", null)
+                .show()
+        }
+
         EngineService.init(applicationContext)
 
         engine = EngineViewModel(this)
@@ -149,7 +160,7 @@ class MainActivity : Activity(),
             b.textSize = 10f
             b.setTextColor(Ui.TEXT)
             b.setBackgroundColor(0)
-            b.gravity = Gravity.CENTER
+            b.setGravity(Gravity.CENTER)
             b.typeface = Typeface.DEFAULT
             b.setPadding(0, dp(6), 0, dp(6))
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -182,7 +193,7 @@ class MainActivity : Activity(),
         b.textSize = 9f
         b.setTextColor(Ui.TEXT)
         b.setBackgroundColor(0)
-        b.gravity = Gravity.CENTER
+        b.setGravity(Gravity.CENTER)
         b.setPadding(0, dp(4), 0, dp(4))
         b.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         b.setOnClickListener { onClick() }

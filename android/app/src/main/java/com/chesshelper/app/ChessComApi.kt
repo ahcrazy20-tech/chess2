@@ -90,6 +90,6 @@ object ChessComApi {
     fun recentGames(username: String, limit: Int = 20): List<GameSummary> {
         val all = archives(username)
         val last = all.lastOrNull() ?: return emptyList()
-        return games(last).sortedByDescending { it.endTimeMillis }.take(limit)
+        return games(last).sortedWith(Cmp.byDesc { it.endTimeMillis }).take(limit)
     }
 }

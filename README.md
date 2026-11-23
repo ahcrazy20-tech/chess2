@@ -24,10 +24,12 @@ gestures (shake or 3-finger tap hides the overlay instantly).
 
 A prebuilt, signed APK ships in [`dist/`](dist/): **`ChessHelper-v2.1.2-release.apk`** — download and sideload it.
 
-Further artifacts are produced by GitHub Actions on every push
-(a ready-to-run workflow ships at [`workflows/build-apk.yml`](workflows/build-apk.yml) — copy it to `.github/workflows/` to activate CI):
+GitHub Actions builds and signs both APKs on every push and on manual dispatch
+via [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml). Download
+the artifacts from the [Actions tab](../../actions/workflows/build-apk.yml):
 
-- `ChessHelper-v2.1.2-release.apk` — signed release (recommended)
+- `ChessHelper-v2.1.2-release-signed` — signed release (recommended)
+- `ChessHelper-v2.1.2-debug-signed` — signed debug build
 
 Install with `adb install -r ChessHelper-v2.1.2-release.apk` or just open the
 file on your phone. Full build instructions: [`android/BUILD-ANDROID.md`](android/BUILD-ANDROID.md).
@@ -49,9 +51,9 @@ android/                 Android app (Kotlin) — complete port
   release.keystore       community signing keystore (password: chesshelper)
 server.py                optional Flask analyze service (see README_SECURITY.md)
 chess-helper.manifest.json  base64 manifest of the iOS project files
-workflows/         CI: build-apk.yml (move to .github/workflows/ to activate)
 dist/              Prebuilt signed APK (ChessHelper-v2.1.2-release.apk)
-.github/workflows/ The repo-provided build-ipa.yml (iOS)
+.github/workflows/ Active CI: build-apk.yml (Android), build-ipa.yml (iOS)
+workflows/         Legacy copy of the Android workflow (template)
 ```
 
 ## Fair play ⚠️

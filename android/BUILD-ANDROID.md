@@ -79,6 +79,31 @@ Both build types are signed with the community keystore at
 `main` and `arena/**`), verifies the signatures, and uploads the artifacts.
 Pushing a `v*` tag additionally attaches the APKs to a GitHub release.
 
+## Local SDK-less release pipeline (v2.1.2+)
+
+The CI workflow above is the primary path. When no Android SDK is available,
+the release APK can also be produced entirely from standalone tools — and after
+v2.1.1's launch crash, this **must** use real tooling end to end (hand-rolled
+dex/AXML/zip writers proved unsafe on Android 16 / One UI 8):
+
+1. Compile Kotlin → class files (`kotlinc -jvm-target 1.8 -Xlambdas=class
+   -Xsam-conversions=class -Xstring-concat=inline` — the flags keep Kotlin 2.x
+   invokedynamic out of the bytecode).
+2. Dex with AOSP `dx` (`--min-sdk-version=26`), then **round-trip the dex
+   through apktool (baksmali → smali → dexlib2 assembler)** so the shipped dex
+   is written by a modern, spec-perfect writer. The final dex must contain
+   **zero `call_site_id` / `method_handle` map items** (verify with the map
+   table) — dx-encoded invokedynamic is what crashed v2.1.0/v2.1.1 at startup.
+3. Build the APK with **apktool** (its aapt2 writes the binary manifest) and
+   **4-byte-align** every stored entry (`classes.dex` must start on an aligned
+   offset or ART refuses to mmap it and the Application class never loads).
+4. Sign with Google's **apksigner** (`--v1-signing-enabled false`, v2+v3) and
+   finish with `apksigner verify --verbose` + an androguard package/label/main
+   sanity check.
+
+`android/tools/make_apk.py` remains as a reference/fallback packager but is not
+used for shipped builds.
+
 ## Architecture notes
 
 - **One engine interface** (`ChessEngine`): `StockfishEngine` (UCI subprocess)

@@ -11,8 +11,8 @@ android {
         applicationId = "com.chesshelper.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "2.1.2"
+        versionCode = 24
+        versionName = "2.1.3"
 
         // Stockfish ships as a JNI library for these ABIs; the built-in
         // fallback engine covers any other device.
@@ -50,11 +50,18 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     kotlinOptions {
-        jvmTarget = "17"
+        // ART has no java.lang.invoke.StringConcatFactory: invokedynamic
+        // string concatenation makes classes fail verification on device.
+        jvmTarget = "1.8"
+        freeCompilerArgs += [
+            "-Xstring-concat=inline",
+            "-Xlambdas=class",
+            "-Xsam-conversions=class"
+        ]
     }
 
     packagingOptions {

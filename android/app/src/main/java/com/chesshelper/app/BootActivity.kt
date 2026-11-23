@@ -32,7 +32,7 @@ class BootActivity : Activity() {
         }
         root.addView(title)
 
-        val trace = BootTrace.read(this)
+        val trace = BootTrace.previousRun
         val logView = TextView(this).apply {
             text = if (trace.isBlank()) {
                 "No trace from a previous run yet.\n\nTap START CHESS HELPER below, then reopen this app if it crashes."

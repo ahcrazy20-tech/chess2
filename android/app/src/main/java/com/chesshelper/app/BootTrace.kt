@@ -15,6 +15,11 @@ object BootTrace {
     private const val FILE_NAME = "boot-trace.log"
     private val stampFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
+    /** Trace of the previous process run, captured before the file was cleared. */
+    @Volatile
+    var previousRun: String = ""
+        private set
+
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
     fun startNewRun(context: Context): String {
@@ -23,6 +28,7 @@ object BootTrace {
         } catch (_: Exception) {
             ""
         }
+        previousRun = previous
         try {
             file(context).writeText("")
         } catch (_: Exception) {

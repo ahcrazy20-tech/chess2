@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ChessHelper"
-include(":app")
+include(":app", ":diagnostic")

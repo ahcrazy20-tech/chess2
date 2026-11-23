@@ -87,6 +87,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Build minimal diagnostic APK
+        working-directory: android
+        run: gradle --no-daemon :diagnostic:assembleRelease --stacktrace
+
+      - name: Upload diagnostic APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessHelper-diagnostic-minimal
+          path: android/diagnostic/build/outputs/apk/release/diagnostic-release.apk
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Verify no invokedynamic call sites in dex
         run: |
           set -euo pipefail

@@ -96,6 +96,10 @@ class EngineViewModel(context: Context) {
     var manualPlayerColor: String? = null
     var sideToMove: String = "w"
         private set
+    var boardFlipped: Boolean = false
+        private set
+    var debugInfo: String = ""
+        private set
     var lastMoveUci: String = ""
         private set
     var plyCount: Int = -1
@@ -128,6 +132,7 @@ class EngineViewModel(context: Context) {
 
     private var previousEvalWhitePov: Double? = null
     private var lastAnalyzedFen: String = ""
+    private var analysisRetries = 0
     private var analysisSeq = 0
     private var openingSeq = 0
     private var debounceRunnable: Runnable? = null
@@ -169,6 +174,7 @@ class EngineViewModel(context: Context) {
         if (!enabled) return
 
         sideToMove = payload.sideToMove
+        boardFlipped = payload.flipped
         lastMoveUci = payload.lastMoveUci
         plyCount = payload.plyCount
         confidence = when (payload.detectionConfidence.lowercase()) {
@@ -265,13 +271,34 @@ class EngineViewModel(context: Context) {
             )
             handler.post {
                 if (seq != analysisSeq || fen != currentFEN) return@post   // stale
-                isThinking = false
-                if (analysis == null) {
-                    errorMessage = "Engine: no analysis returned"
-                    fire()
+                val valid = analysis?.topMoves?.filter { moveConsistent(fen, it.uci) }
+                    ?: emptyList()
+                if (analysis == null || valid.isEmpty()) {
+                    debugInfo = "raw=${analysis?.topMoves?.size ?: -1} valid=${valid.size}"
+                    if (analysisRetries < 2) {
+                        // Stockfish sometimes ends a search before emitting a PV
+                        // (fast moves, engine busy). Retry quietly instead of
+                        // showing a scary error to the player.
+                        analysisRetries++
+                        errorMessage = ""
+                        fire()
+                        handler.postDelayed({
+                            if (fen == currentFEN) {
+                                lastAnalyzedFen = ""
+                                runAnalysis(fen)
+                            }
+                        }, 400)
+                    } else {
+                        isThinking = false
+                        errorMessage = "Engine busy — tap ♟ to retry"
+                        fire()
+                    }
                     return@post
                 }
-                applyAnalysis(fen, analysis)
+                analysisRetries = 0
+                debugInfo = ""
+                isThinking = false
+                applyAnalysis(fen, analysis.copy(topMoves = valid))
             }
         }, "engine-vm").apply { isDaemon = true; start() }
 
@@ -412,6 +439,8 @@ class EngineViewModel(context: Context) {
 
     /** Blank out results from the previous position the instant the board changes. */
     private fun clearStaleAnalysis() {
+        analysisRetries = 0
+        debugInfo = ""
         topMoves = emptyList()
         bestMoveUci = ""
         bestMoveSan = ""

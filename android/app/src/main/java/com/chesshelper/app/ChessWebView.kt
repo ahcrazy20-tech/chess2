@@ -85,6 +85,19 @@ class ChessWebView @JvmOverloads constructor(
         if (urlString.startsWith("http")) loadUrl(urlString)
     }
 
+    /** Draw a translucent arrow over the board for the engine's best move. */
+    fun showBestMoveArrow(uci: String, flipped: Boolean) {
+        evaluateJavascript(
+            "window.__ch_showArrow && window.__ch_showArrow(" +
+                "${JSONObject.quote(uci)}, $flipped);",
+            null
+        )
+    }
+
+    fun clearBestMoveArrow() {
+        evaluateJavascript("window.__ch_clearArrow && window.__ch_clearArrow();", null)
+    }
+
     private fun injectAdblock() {
         if (adblockCss.isEmpty()) return
         val json = JSONObject.quote(adblockCss)

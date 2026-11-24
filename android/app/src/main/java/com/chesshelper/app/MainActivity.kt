@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
@@ -73,7 +74,14 @@ class MainActivity : Activity(),
         buildUi()
         BootTrace.mark(this, "UI_BUILT")
 
-        overlay = HelperOverlay(this, engine) { stealth.hide("manual") }
+        overlay = HelperOverlay(
+            this,
+            engine,
+            { stealth.hide("manual") }
+        ) { uci ->
+            if (uci.isEmpty()) webView.clearBestMoveArrow()
+            else webView.showBestMoveArrow(uci, engine.boardFlipped)
+        }
         overlay.attachTo(playContainer)
 
         // Small draggable handle: tap = show/hide engine panel,
@@ -198,6 +206,26 @@ class MainActivity : Activity(),
 
         val scrollLessRoot = root
         setContentView(scrollLessRoot)
+
+        // Respect the status bar and camera cutout so the top bar never sits
+        // on top of the phone's own UI (and the bottom bar clears the gesture
+        // navigation area).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.statusBarColor = 0xFF1A1A1A.toInt()
+        }
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val topCutout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                insets.displayCutout?.safeInsetTop ?: 0 else 0
+            @Suppress("DEPRECATION")
+            val statusTop = insets.systemWindowInsetTop
+            @Suppress("DEPRECATION")
+            val navBottom = insets.systemWindowInsetBottom
+            val top = maxOf(statusTop, topCutout)
+            topNav.setPadding(dp(4), top + dp(4), dp(4), dp(4))
+            bottomNav.setPadding(dp(4), dp(4), dp(4), navBottom + dp(4))
+            insets.consumeSystemWindowInsets()
+        }
     }
 
     private fun fullLp() = FrameLayout.LayoutParams(

@@ -20,7 +20,8 @@ import android.widget.TextView
 class HelperOverlay(
     private val ctx: Context,
     private val engine: EngineViewModel,
-    private val onPanicHide: () -> Unit
+    private val onPanicHide: () -> Unit,
+    private val onBestMove: (String) -> Unit = {}
 ) : EngineViewModel.Listener {
 
     val view: LinearLayout = LinearLayout(ctx)
@@ -342,8 +343,16 @@ class HelperOverlay(
         bodyCol.addView(pr)
     }
 
+    private var lastArrowUci: String = ""
+
     override fun onEngineStateChanged() {
         render()
+        val uci = if (engine.enabled) engine.bestMoveUci else ""
+        val key = "$uci|${engine.boardFlipped}"
+        if (key != lastArrowUci) {
+            lastArrowUci = key
+            onBestMove(uci)
+        }
     }
 
     /** Re-read the engine state and refresh every row. */
@@ -466,7 +475,8 @@ class HelperOverlay(
         pvText.visibility = if (engine.pvText.isEmpty()) View.GONE else View.VISIBLE
         if (engine.errorMessage.isNotEmpty()) {
             errorRow.visibility = View.VISIBLE
-            errorText.text = engine.errorMessage
+            errorText.text = if (engine.debugInfo.isBlank()) engine.errorMessage
+            else "${engine.errorMessage} (${engine.debugInfo})"
         } else {
             errorRow.visibility = View.GONE
         }

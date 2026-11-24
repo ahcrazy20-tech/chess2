@@ -406,6 +406,62 @@
     prevGrid = grid;
   }
 
+  // ---- Semi-transparent best-move arrow drawn over the real board ----
+  // Coordinates come from the board element itself, so the arrow stays
+  // aligned with the pieces at any screen size or orientation.
+  function squareCenter(square, size, flipped) {
+    const file = square.charCodeAt(0) - 97;   // a=0
+    const rank = parseInt(square[1], 10);     // 1..8
+    const col = flipped ? (7 - file) : file;
+    const row = flipped ? (rank - 1) : (8 - rank);
+    return { x: (col + 0.5) * size, y: (row + 0.5) * size };
+  }
+
+  window.__ch_showArrow = function (uci, flipped) {
+    window.__ch_clearArrow();
+    if (!uci || uci.length < 4) return;
+    const board = findBoard();
+    if (!board) return;
+    try {
+      const rect = board.getBoundingClientRect();
+      const size = rect.width / 8;
+      if (!(size > 0)) return;
+      const from = squareCenter(uci.substring(0, 2), size, !!flipped);
+      const to = squareCenter(uci.substring(2, 4), size, !!flipped);
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.id = '__ch_arrow';
+      svg.setAttribute('viewBox', '0 0 ' + (size * 8) + ' ' + (size * 8));
+      svg.style.cssText =
+        'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:2147483000;';
+      const width = size * 0.13;
+      const pad = size * 0.18;
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const x1 = from.x + (dx / len) * pad;
+      const y1 = from.y + (dy / len) * pad;
+      const x2 = to.x - (dx / len) * pad;
+      const y2 = to.y - (dy / len) * pad;
+      svg.innerHTML =
+        '<defs><marker id="__ch_arrowhead" markerWidth="6" markerHeight="6"' +
+        ' refX="5" refY="3" orient="auto" markerUnits="strokeWidth">' +
+        '<path d="M0,0 L6,3 L0,6 Z" fill="rgba(0,220,120,0.85)"/></marker></defs>' +
+        '<circle cx="' + from.x + '" cy="' + from.y + '" r="' + (size * 0.11) +
+        '" fill="none" stroke="rgba(0,220,120,0.75)" stroke-width="' + (size * 0.05) + '"/>' +
+        '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+        '" stroke="rgba(0,220,120,0.75)" stroke-width="' + width +
+        '" stroke-linecap="round" marker-end="url(#__ch_arrowhead)"/>';
+      board.appendChild(svg);
+    } catch (e) {}
+  };
+
+  window.__ch_clearArrow = function () {
+    try {
+      const old = document.getElementById('__ch_arrow');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+    } catch (e) {}
+  };
+
   window.__ch_startReader = function () {
     if (window.__ch_timer) return;
     window.__ch_timer = setInterval(tick, 500);

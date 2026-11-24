@@ -62,19 +62,19 @@ class SettingsActivity : Activity() {
     private fun buildEngineSection() {
         root.addView(Ui.sectionTitle(this, "Engine — local analysis"))
 
-        tvDepth = Ui.text(this, "Search depth: ${prefs.getInt("engineDepth", 20)}", 12f, Ui.TEXT)
+        tvDepth = Ui.text(this, "Search depth: ${prefs.getInt("engineDepth", 24)}", 12f, Ui.TEXT)
         root.addView(labelRow("Search depth", tvDepth))
         root.addView(seek(
-            max = 15, progress = prefs.getInt("engineDepth", 20) - 10
+            max = 15, progress = prefs.getInt("engineDepth", 24) - 10
         ) { v ->
             prefs.edit().putInt("engineDepth", v + 10).apply()
             tvDepth.text = "Search depth: ${v + 10}"
         })
 
-        tvMovetime = Ui.text(this, "Max think time: ${prefs.getInt("engineMovetime", 2000)} ms", 12f, Ui.TEXT)
+        tvMovetime = Ui.text(this, "Max think time: ${prefs.getInt("engineMovetime", 3000)} ms", 12f, Ui.TEXT)
         root.addView(labelRow("Max think time", tvMovetime))
         root.addView(seek(
-            max = 18, progress = (prefs.getInt("engineMovetime", 2000) - 500) / 250
+            max = 18, progress = (prefs.getInt("engineMovetime", 3000) - 500) / 250
         ) { v ->
             val ms = 500 + v * 250
             prefs.edit().putInt("engineMovetime", ms).apply()

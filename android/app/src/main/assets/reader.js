@@ -236,6 +236,80 @@
     return grid.map(r => r.join('')).join(',') === start;
   }
 
+  // ---- Best possible source: chess.com's own game object ----
+  // Modern chess.com exposes the authoritative FEN right on the board element
+  // (`board.game.getFEN()`). Using it avoids every DOM/transform guessing bug
+  // (stale positions, animation frames, shifted coordinates).
+  function gridFromFen(fen) {
+    if (!fen || typeof fen !== 'string') return null;
+    const rows = fen.trim().split(/\s+/)[0].split('/');
+    if (rows.length !== 8) return null;
+    const grid = [];
+    for (const row of rows) {
+      const cells = [];
+      for (const ch of row) {
+        if (ch >= '1' && ch <= '8') {
+          for (let i = 0; i < +ch; i++) cells.push('.');
+        } else if ('KQRBNPkqrbnp'.indexOf(ch) >= 0) {
+          cells.push(ch);
+        } else {
+          return null;
+        }
+      }
+      if (cells.length !== 8) return null;
+      grid.push(cells);
+    }
+    return grid;
+  }
+
+  function nativeSnapshot(board) {
+    let fen = null;
+    let game = null;
+    try {
+      game = board.game || null;
+      if (game && typeof game.getFEN === 'function') fen = game.getFEN();
+    } catch (e) {}
+    if (!fen) {
+      try {
+        fen = board.getAttribute('fen') || board.getAttribute('data-fen');
+      } catch (e) {}
+    }
+    if (!fen) return null;
+    const grid = gridFromFen(fen);
+    if (!grid) return null;
+    const parts = fen.trim().split(/\s+/);
+    let historyCount = -1;
+    try {
+      const h = game && typeof game.getHistorySANs === 'function'
+        ? game.getHistorySANs() : null;
+      if (Array.isArray(h)) historyCount = h.length;
+    } catch (e) {}
+    return {
+      grid: grid,
+      fen: fen.trim(),
+      sideToMove: parts[1] === 'b' ? 'b' : 'w',
+      castling: parts[2] || '-',
+      ep: parts[3] || '-',
+      plyCount: historyCount,
+    };
+  }
+
+  // Reject obviously broken DOM reads (mid-animation ghosts, wrong selectors).
+  function gridLooksSane(grid) {
+    let whiteK = 0, blackK = 0, total = 0;
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const p = grid[r][c];
+        if (p === '.') continue;
+        total++;
+        if (p === 'K') whiteK++;
+        if (p === 'k') blackK++;
+        if ((p === 'P' || p === 'p') && (r === 0 || r === 7)) return false;
+      }
+    }
+    return whiteK === 1 && blackK === 1 && total <= 32;
+  }
+
   // ---- Main tick ----
   let lastPayload = '';
   let lastDetectedSide = 'w';
@@ -243,18 +317,24 @@
   function tick() {
     const board = findBoard();
     if (!board) return;
-    const grid = readGrid(board);
+
+    // Prefer chess.com's own FEN; fall back to DOM scraping only when the
+    // site does not expose the game object (e.g. embedded analysis widgets).
+    const native = nativeSnapshot(board);
+    const grid = native ? native.grid : readGrid(board);
     if (!grid) return;
+    if (!native && !gridLooksSane(grid)) return;
 
-    // Detect side-to-move — try multiple sources and combine
-    let sideToMove = null;
-    let confidence = 'low';
+    // Detect side-to-move — native FEN wins; otherwise use several fallbacks.
+    let sideToMove = native ? native.sideToMove : null;
+    let confidence = native ? 'high' : 'low';
 
-    const plyCount = detectPlyCount();
-    if (plyCount >= 0) {
+    const plyCount = native && native.plyCount >= 0
+      ? native.plyCount : detectPlyCount();
+    if (!native && plyCount >= 0) {
       sideToMove = (plyCount % 2 === 0) ? 'w' : 'b';
       confidence = 'high';
-    } else {
+    } else if (!native) {
       const clockSide = detectSideFromClock();
       if (clockSide) {
         sideToMove = clockSide;
@@ -289,6 +369,10 @@
       lastMoveUCI: mv ? mv.uci : '',
       plyCount: plyCount,
       detectionConfidence: confidence,
+      fen: native ? native.fen : '',
+      castling: native ? native.castling : '',
+      ep: native ? native.ep : '',
+      source: native ? 'native' : 'dom',
     };
 
     const key = JSON.stringify(payload);

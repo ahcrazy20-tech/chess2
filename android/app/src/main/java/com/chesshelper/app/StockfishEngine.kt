@@ -225,7 +225,10 @@ object StockfishEngine : ChessEngine {
                     mvBuckets.clear()
                     pvBuckets.clear()
                     currentDepth = 0
-                    pendingSideToMoveWhite = !fen.trim().endsWith(" b")
+                    // FEN ends with move counters, not with the side field —
+                    // parse it properly or every black-to-move eval is flipped.
+                    pendingSideToMoveWhite =
+                        fen.trim().split(Regex("\\s+")).getOrElse(1) { "w" } != "b"
                 }
                 send("stop")
                 send("setoption name MultiPV value ${multiPV.coerceIn(1, 5)}")

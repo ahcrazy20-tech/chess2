@@ -24,7 +24,11 @@ data class BoardPayload(
     val flippedConfident: Boolean,
     val lastMoveUci: String,
     val plyCount: Int,
-    val detectionConfidence: String    // "high" | "medium" | "low" | "unknown"
+    val detectionConfidence: String,   // "high" | "medium" | "low" | "unknown"
+    val fen: String = "",              // authoritative FEN from chess.com when available
+    val castling: String = "",
+    val ep: String = "",
+    val source: String = "dom"         // "native" | "dom"
 )
 
 /**
@@ -46,6 +50,20 @@ class EngineViewModel(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("chesshelper", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
+
+    init {
+        // Existing installs keep older, weaker settings — lift them to the
+        // accuracy baseline so the suggestion is actually trustworthy.
+        val editor = prefs.edit()
+        var changed = false
+        if (prefs.getInt("engineDepth", 24) < 20) {
+            editor.putInt("engineDepth", 20); changed = true
+        }
+        if (prefs.getInt("engineMovetime", 3000) < 2500) {
+            editor.putInt("engineMovetime", 2500); changed = true
+        }
+        if (changed) editor.apply()
+    }
 
     var listener: Listener? = null
 
@@ -163,14 +181,23 @@ class EngineViewModel(context: Context) {
             detectedPlayerColor = if (payload.flipped) "b" else "w"
         }
 
+        // chess.com's own FEN is authoritative — it fixes side-to-move,
+        // castling, en-passant and every DOM/animation detection edge case.
         val fenBoard = buildFenBoard(payload.grid)
-        val castling = deriveCastlingRights(payload.grid)
-        val ep = deriveEpTarget(payload.grid, payload.lastMoveUci)
+        val castling = if (payload.castling.isNotBlank())
+            payload.castling else deriveCastlingRights(payload.grid)
+        val ep = if (payload.ep.isNotBlank())
+            payload.ep else deriveEpTarget(payload.grid, payload.lastMoveUci)
         val fullmove = maxOf(1, (payload.plyCount / 2) + 1)
-        val fen = "$fenBoard ${payload.sideToMove} $castling $ep 0 $fullmove"
+        val nativeFen = normalizeNativeFen(payload.fen, fullmove)
+        val fen = nativeFen.ifEmpty {
+            "$fenBoard ${payload.sideToMove} $castling $ep 0 $fullmove"
+        }
 
         if (fen != currentFEN) {
             currentFEN = fen
+            // Never show a move computed for the previous position.
+            clearStaleAnalysis()
             trackSanHistory(fen, payload)
             queueAnalyze(fen)
         } else {
@@ -212,7 +239,7 @@ class EngineViewModel(context: Context) {
         debounceRunnable?.let { handler.removeCallbacks(it) }
         val r = Runnable { runAnalysis(fen) }
         debounceRunnable = r
-        if (immediate) r.run() else handler.postDelayed(r, 300)
+        if (immediate) r.run() else handler.postDelayed(r, 120)
     }
 
     private fun runAnalysis(fen: String) {
@@ -225,19 +252,19 @@ class EngineViewModel(context: Context) {
         errorMessage = ""
         fire()
 
-        val depthPref = prefs.getInt("engineDepth", 20)
-        val movetimePref = prefs.getInt("engineMovetime", 2000)
+        val depthPref = prefs.getInt("engineDepth", 24)
+        val movetimePref = prefs.getInt("engineMovetime", 3000)
         val multiPvPref = prefs.getInt("multiPV", 3)
 
         Thread({
             val analysis = EngineService.analyzeBlocking(
                 fen = fen,
                 multiPV = multiPvPref.coerceIn(1, 5),
-                depth = depthPref.coerceIn(10, 25),
-                movetimeMs = movetimePref.coerceIn(200, 5000)
+                depth = depthPref.coerceIn(12, 30),
+                movetimeMs = movetimePref.coerceIn(300, 8000)
             )
             handler.post {
-                if (seq != analysisSeq) return@post   // stale
+                if (seq != analysisSeq || fen != currentFEN) return@post   // stale
                 isThinking = false
                 if (analysis == null) {
                     errorMessage = "Engine: no analysis returned"
@@ -253,17 +280,30 @@ class EngineViewModel(context: Context) {
     }
 
     private fun applyAnalysis(fen: String, analysis: EngineAnalysis) {
-        topMoves = analysis.topMoves
-        val best = analysis.bestMove
-        if (best != null) {
-            bestMoveUci = best.uci
-            bestMoveSan = sanOf(fen, best.uci)
-            ponderSan = sanOf(fen, analysis.ponder, opposite = true)
-            evaluation = best.evalString
-            winChance = best.winChance
+        // If the engine answered for a position that no longer matches the
+        // board, drop it rather than showing an impossible move like g8f6
+        // when g8 is empty.
+        val valid = analysis.topMoves.filter { moveConsistent(fen, it.uci) }
+        val best = valid.firstOrNull()
+        if (best == null) {
+            topMoves = emptyList()
+            bestMoveUci = ""
+            bestMoveSan = ""
+            evaluation = "—"
+            errorMessage = "Waiting for a fresh board…"
+            fire()
+            return
         }
+        topMoves = valid
+        bestMoveUci = best.uci
+        bestMoveSan = sanOf(fen, best.uci)
+        ponderSan = if (moveExistsOnBoard(fen, analysis.ponder)) {
+            sanOf(fen, analysis.ponder, opposite = true)
+        } else ""
+        evaluation = best.evalString
+        winChance = best.winChance
         depth = analysis.depth
-        pvText = analysis.topMoves.firstOrNull()?.pv?.take(80) ?: ""
+        pvText = valid.firstOrNull()?.pv?.take(80) ?: ""
         errorMessage = ""
 
         val evalWhitePov = evalStringToWhitePov(evaluation)
@@ -360,6 +400,56 @@ class EngineViewModel(context: Context) {
     // FEN helpers (port of the Swift private funcs) + one upgrade:
     // en-passant is derived from the last move when possible.
     // ------------------------------------------------------------------
+
+    /** Accept only a well-formed six-field FEN; keep our own move counters. */
+    private fun normalizeNativeFen(raw: String, fullmove: Int): String {
+        if (raw.isBlank()) return ""
+        val parts = raw.trim().split(Regex("\\s+"))
+        if (parts.size < 4) return ""
+        val side = if (parts[1] == "b") "b" else "w"
+        return "${parts[0]} $side ${parts[2]} ${parts[3]} 0 ${maxOf(1, fullmove)}"
+    }
+
+    /** Blank out results from the previous position the instant the board changes. */
+    private fun clearStaleAnalysis() {
+        topMoves = emptyList()
+        bestMoveUci = ""
+        bestMoveSan = ""
+        ponderSan = ""
+        evaluation = "—"
+        winChance = 50.0
+        depth = 0
+        pvText = ""
+        errorMessage = ""
+        isThinking = true
+        fire()
+    }
+
+    /** A ponder move belongs to the opponent, so only check that its source exists. */
+    private fun moveExistsOnBoard(fen: String, uci: String): Boolean {
+        if (uci.length < 4 || uci == "(none)") return false
+        return try {
+            val board = Board.fromFEN(fen)
+            val from = Board.squareIndex(uci.substring(0, 2)) ?: return false
+            board.squares[from] != '.'
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Reject a UCI move that cannot be made on the current board/side. */
+    private fun moveConsistent(fen: String, uci: String): Boolean {
+        if (uci.length < 4 || uci == "(none)") return false
+        return try {
+            val board = Board.fromFEN(fen)
+            val mv = board.parseUCI(uci) ?: return false
+            val piece = board.squares[mv.from]
+            if (piece == '.') return false
+            if (board.whiteToMove) piece.isUpperCase() else piece.isLowerCase()
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     private fun buildFenBoard(grid64: String): String {
         val chars = grid64.toCharArray()

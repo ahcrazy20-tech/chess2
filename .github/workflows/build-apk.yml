@@ -1,4 +1,4 @@
-name: Build Android APK (ChessHelper v2.1.9, signed)
+name: Build Android APK (ChessHelper v2.2.0, signed)
 
 on:
   push:
@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       engine:
-        description: 'Engine to bundle (fallback = small APK, stockfish = ~160 MB)'
+        description: 'Engine to bundle (fallback = small APK, stockfish = ~80 MB)'
         required: true
-        default: 'fallback'
+        default: 'stockfish'
         type: choice
         options:
           - fallback
@@ -52,24 +52,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Bundle Stockfish 19 (arm64 + armv7)
-        if: github.event_name == 'workflow_dispatch' && inputs.engine == 'stockfish'
+      - name: Bundle Stockfish 19 (arm64)
+        if: github.event_name != 'workflow_dispatch' || inputs.engine == 'stockfish'
         run: |
           set -euo pipefail
           mkdir -p /tmp/sf && cd /tmp/sf
           curl --retry 3 -fsSLo sf64.tar.gz https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-android-arm64-universal.tar.gz
-          curl --retry 3 -fsSLo sf32.tar.gz https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-android-armv7-neon.tar.gz
-          mkdir x64 x32
+          mkdir x64
           tar -xzf sf64.tar.gz -C x64 || gunzip -c sf64.tar.gz > x64/stockfish
-          tar -xzf sf32.tar.gz -C x32 || gunzip -c sf32.tar.gz > x32/stockfish
           BIN64=$(find x64 -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
-          BIN32=$(find x32 -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
-          echo "arm64: $BIN64 / armv7: $BIN32"
+          echo "arm64: $BIN64"
           JNILIBS="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
-          mkdir -p "$JNILIBS/arm64-v8a" "$JNILIBS/armeabi-v7a"
+          mkdir -p "$JNILIBS/arm64-v8a"
           cp "$BIN64" "$JNILIBS/arm64-v8a/libstockfish.so"
-          cp "$BIN32" "$JNILIBS/armeabi-v7a/libstockfish.so"
-          chmod 644 "$JNILIBS"/arm64-v8a/libstockfish.so "$JNILIBS"/armeabi-v7a/libstockfish.so
+          chmod 644 "$JNILIBS/arm64-v8a/libstockfish.so"
           ls -lh "$JNILIBS"/*/*
 
       - name: Build release + debug APKs
@@ -123,23 +119,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.1.9-release.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.1.9-debug.apk
+          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.2.0-release.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.2.0-debug.apk
           ls -lh dist/
 
       - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.1.9-release-signed
-          path: dist/ChessHelper-v2.1.9-release.apk
+          name: ChessHelper-v2.2.0-release-signed
+          path: dist/ChessHelper-v2.2.0-release.apk
           if-no-files-found: error
           retention-days: 90
 
       - name: Upload signed debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.1.9-debug-signed
-          path: dist/ChessHelper-v2.1.9-debug.apk
+          name: ChessHelper-v2.2.0-debug-signed
+          path: dist/ChessHelper-v2.2.0-debug.apk
           if-no-files-found: error
           retention-days: 90
 

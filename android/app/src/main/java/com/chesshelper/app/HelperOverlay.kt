@@ -351,6 +351,7 @@ class HelperOverlay(
         val dp = { v: Int -> ctx.dp(v) }
 
         dot.background = Ui.circleBg(if (engine.enabled) Ui.GREEN else 0xFF808080.toInt())
+        title.text = if (EngineService.usingStockfish) "Chess Helper · Stockfish 19" else "Chess Helper · Built-in"
 
         turnPill.text = if (engine.isMyTurn) "▶ Your turn" else "⏸ Waiting"
         turnPill.background = Ui.roundedBg(

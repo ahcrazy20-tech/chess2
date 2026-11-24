@@ -153,6 +153,7 @@ class MainActivity : Activity(),
         addNavButton("🤖\nBots") { webView.loadChessCom("/play/computer") }
         addNavButton("🧩\nPuzzles") { webView.loadChessCom("/puzzles") }
         addNavButton("📊\nAnalysis") { webView.loadChessCom("/analysis") }
+        addNavButton("☰\nMore") { showMoreMenu() }
         root.addView(topNav)
 
         // Content area.
@@ -226,17 +227,34 @@ class MainActivity : Activity(),
     private fun addNavButton(label: String, onClick: () -> Unit) {
         val b = Button(this)
         b.text = label
-        b.textSize = 12f
+        b.textSize = 11f
         b.isAllCaps = false
         b.setTextColor(Ui.TEXT)
         b.setBackgroundColor(0)
         b.setGravity(Gravity.CENTER)
         b.typeface = Typeface.DEFAULT_BOLD
         b.setPadding(dp(2), dp(12), dp(2), dp(12))
-        b.minHeight = dp(56)
+        b.minHeight = dp(52)
         b.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         b.setOnClickListener { onClick() }
         topNav.addView(b)
+    }
+
+    /** Extra chess.com shortcuts that the official app exposes as separate tabs. */
+    private fun showMoreMenu() {
+        val items = arrayOf(
+            "Account / Log in", "Lessons", "Coaches", "Tournaments",
+            "Friends", "Analysis board", "Openings", "Puzzle rush"
+        )
+        val paths = arrayOf(
+            "/account", "/lessons", "/coaches", "/tournaments",
+            "/friends", "/analysis", "/openings", "/puzzles/rush"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Chess.com shortcuts")
+            .setItems(items) { _, which -> webView.loadChessCom(paths[which]) }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /** Called by the Openings tab's "open on chess.com analysis board" button. */

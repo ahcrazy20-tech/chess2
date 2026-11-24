@@ -42,10 +42,13 @@ class ReviewTab(private val ctx: Context) {
         val ply: Int,
         val san: String,
         val bestMoveSan: String,
-        val lossCentipawns: Int
+        val lossCentipawns: Int,
+        val accuracy: Double = 100.0,
+        val brilliant: Boolean = false
     ) {
         val severity: String
             get() = when {
+                brilliant -> "!! Brilliant"
                 lossCentipawns >= 300 -> "?? Blunder"
                 lossCentipawns >= 100 -> "? Mistake"
                 lossCentipawns >= 50 -> "?! Inaccuracy"
@@ -54,6 +57,7 @@ class ReviewTab(private val ctx: Context) {
 
         val color: Int
             get() = when {
+                brilliant -> Ui.CYAN
                 lossCentipawns >= 300 -> Ui.RED
                 lossCentipawns >= 100 -> Ui.ORANGE
                 lossCentipawns >= 50 -> Ui.YELLOW
@@ -203,53 +207,100 @@ class ReviewTab(private val ctx: Context) {
             }
 
             val results = ArrayList<MoveReview>()
+            val whiteAcc = ArrayList<Double>()
+            val blackAcc = ArrayList<Double>()
+            var brilliantCount = 0
             for (i in 0 until states.size - 1) {
                 val before = states[i]
                 val after = states[i + 1]
 
-                val a1 = EngineService.analyzeBlocking(before.fen, multiPV = 1, depth = 12, movetimeMs = 400)
+                val a1 = EngineService.analyzeBlocking(before.fen, multiPV = 3, depth = 12, movetimeMs = 400)
                 val a2 = EngineService.analyzeBlocking(after.fen, multiPV = 1, depth = 12, movetimeMs = 400)
                 if (a1 != null && a2 != null) {
-                    val evalBefore = parseEval(a1.bestMove?.evalString ?: "0")
-                    val evalAfter = parseEval(a2.bestMove?.evalString ?: "0")
-                    // ply i+1: odd plies are White's move. Loss for the mover:
-                    val sideMultiplier = if ((i + 1) % 2 == 1) 1.0 else -1.0
-                    val delta = (evalBefore - evalAfter) * sideMultiplier
-                    val loss = Math.round(delta * 100.0).toInt()
+                    // All evals are WHITE POV, so flip for the player who moved.
+                    val moverSign = if (i % 2 == 0) 1.0 else -1.0
+                    val beforeMover = parseEval(a1.bestMove?.evalString ?: "0") * moverSign
+                    val afterMover = parseEval(a2.bestMove?.evalString ?: "0") * moverSign
+                    val loss = Math.round((beforeMover - afterMover) * 100.0).toInt()
+
+                    // Published Lichess-style accuracy curve (chess.com's CAPS2
+                    // is private, so this is an honest approximation).
+                    val drop = winPercent(beforeMover * 100.0) - winPercent(afterMover * 100.0)
+                    val acc = moveAccuracy(drop)
+                    (if (i % 2 == 0) whiteAcc else blackAcc).add(acc)
+
+                    // "Brilliant" heuristic: the engine had one clearly superior
+                    // move and the player found it without losing evaluation.
+                    val bestCp = parseEval(a1.topMoves.firstOrNull()?.evalString ?: "0") * moverSign
+                    val secondCp = parseEval(a1.topMoves.getOrNull(1)?.evalString ?: "0") * moverSign
+                    val gap = kotlin.math.abs(secondCp - bestCp) * 100.0
+                    val playedUci = after.moveUci
+                    val foundBest = playedUci.isEmpty() ||
+                        playedUci == a1.bestMove?.uci ||
+                        playedUci == a1.topMoves.firstOrNull()?.uci
+                    val brilliant = foundBest && loss <= 30 && gap >= 150.0
+                    if (brilliant) brilliantCount++
+
                     val bestSan = a1.bestMove?.uci?.let { sanOf(before.fen, it) } ?: "?"
-                    results.add(MoveReview(i + 1, after.moveSAN, bestSan, loss))
+                    results.add(
+                        MoveReview(i + 1, after.moveSAN, bestSan, loss, acc, brilliant)
+                    )
                 }
                 val pct = ((i + 1) * 100 / (states.size - 1))
                 val done = results.toList()
+                val wa = whiteAcc.toList()
+                val ba = blackAcc.toList()
+                val bc = brilliantCount
                 (ctx as? android.app.Activity)?.runOnUiThread {
                     progressBar.progress = pct
                     progressLabel.text = "$pct%"
-                    renderResults(done, reviewing = true)
+                    renderResults(done, reviewing = true, wa, ba, bc)
                 }
             }
 
             val finalResults = results.toList()
+            val finalWhite = whiteAcc.toList()
+            val finalBlack = blackAcc.toList()
+            val finalBrilliant = brilliantCount
             (ctx as? android.app.Activity)?.runOnUiThread {
                 busy = false
                 progressWrap.visibility = View.GONE
                 statusText.text = "Review complete."
-                renderResults(finalResults, reviewing = false)
+                renderResults(finalResults, false, finalWhite, finalBlack, finalBrilliant)
                 newBtn.visibility = View.VISIBLE
             }
         }, "review-analyze").apply { isDaemon = true; start() }
     }
 
-    private fun renderResults(all: List<MoveReview>, reviewing: Boolean) {
+    private fun renderResults(
+        all: List<MoveReview>,
+        reviewing: Boolean,
+        whiteAcc: List<Double> = emptyList(),
+        blackAcc: List<Double> = emptyList(),
+        brilliantCount: Int = 0
+    ) {
         resultsCol.removeAllViews()
         if (!reviewing) {
-            val bad = all.filter { it.lossCentipawns >= 50 }
+            val w = if (whiteAcc.isEmpty()) "—" else "%.1f%%".format(whiteAcc.average())
+            val b = if (blackAcc.isEmpty()) "—" else "%.1f%%".format(blackAcc.average())
+            resultsCol.addView(
+                Ui.text(
+                    ctx, "Accuracy (approx): White $w · Black $b", 13f, Ui.GREEN, bold = true
+                )
+            )
+            resultsCol.addView(
+                Ui.text(ctx, "Brilliant moves (approx): $brilliantCount", 11f, Ui.CYAN)
+            )
+            resultsCol.addView(Ui.vSpace(ctx, 6))
+
+            val bad = all.filter { it.lossCentipawns >= 50 || it.brilliant }
             if (bad.isEmpty()) {
                 resultsCol.addView(
                     Ui.text(ctx, "✓ Clean game! No inaccuracies ≥50cp found.", 13f, Ui.GREEN, bold = true)
                 )
                 return
             }
-            resultsCol.addView(Ui.sectionTitle(ctx, "Inaccuracies & blunders"))
+            resultsCol.addView(Ui.sectionTitle(ctx, "Brilliant / inaccuracies / blunders"))
             for (m in bad) {
                 val row = LinearLayout(ctx)
                 row.orientation = LinearLayout.HORIZONTAL
@@ -279,6 +330,16 @@ class ReviewTab(private val ctx: Context) {
                 resultsCol.addView(row)
             }
         }
+    }
+
+    /** Public Lichess logistic model: centipawns (from mover's side) → win %. */
+    private fun winPercent(centipawns: Double): Double =
+        100.0 / (1.0 + Math.exp(-0.00368208 * centipawns))
+
+    /** Published accuracy curve. Chess.com's CAPS2 formula is not public. */
+    private fun moveAccuracy(winPointsLost: Double): Double {
+        val raw = 103.1668 * Math.exp(-0.04354 * maxOf(0.0, winPointsLost)) - 3.1669
+        return raw.coerceIn(0.0, 100.0)
     }
 
     private fun parseEval(s: String): Double {

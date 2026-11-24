@@ -1,4 +1,4 @@
-name: Build Android APK (ChessHelper v2.2.0, signed)
+name: Build Android APK (ChessHelper v2.2.1, signed)
 
 on:
   push:
@@ -119,23 +119,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.2.0-release.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.2.0-debug.apk
+          cp android/app/build/outputs/apk/release/app-release.apk dist/ChessHelper-v2.2.1-release.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/ChessHelper-v2.2.1-debug.apk
           ls -lh dist/
 
       - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.2.0-release-signed
-          path: dist/ChessHelper-v2.2.0-release.apk
+          name: ChessHelper-v2.2.1-release-signed
+          path: dist/ChessHelper-v2.2.1-release.apk
           if-no-files-found: error
           retention-days: 90
 
       - name: Upload signed debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ChessHelper-v2.2.0-debug-signed
-          path: dist/ChessHelper-v2.2.0-debug.apk
+          name: ChessHelper-v2.2.1-debug-signed
+          path: dist/ChessHelper-v2.2.1-debug.apk
           if-no-files-found: error
           retention-days: 90
 

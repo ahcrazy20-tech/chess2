@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import android.app.Activity
 
 /**
@@ -33,6 +34,7 @@ class MainActivity : Activity(),
     private lateinit var stealth: StealthManager
 
     private lateinit var topNav: LinearLayout
+    private lateinit var engineHandle: View
     private lateinit var content: FrameLayout
     private lateinit var playContainer: PanicFrameLayout
     private lateinit var bottomNav: LinearLayout
@@ -74,32 +76,10 @@ class MainActivity : Activity(),
         overlay = HelperOverlay(this, engine) { stealth.hide("manual") }
         overlay.attachTo(playContainer)
 
-        // Always-visible control to bring the engine panel back if it is hidden.
-        val engineToggle = Button(this).apply {
-            text = "ENGINE"
-            textSize = 12f
-            setBackgroundColor(0xCC1A1A1A.toInt())
-            setTextColor(Ui.GREEN)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            elevation = 10_001f
-            alpha = 0.92f
-            setOnClickListener {
-                val panel = this@MainActivity.overlay.view
-                panel.visibility = if (panel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                if (panel.visibility == View.VISIBLE) panel.bringToFront()
-            }
-        }
-        playContainer.addView(
-            engineToggle,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
-            ).apply {
-                topMargin = dp(8)
-                marginEnd = dp(8)
-            }
-        )
+        // Small draggable handle: tap = show/hide engine panel,
+        // long-press = hide the handle itself (restore from ☰ More).
+        engineHandle = createEngineHandle()
+        playContainer.addView(engineHandle)
         BootTrace.mark(this, "OVERLAY_READY")
 
         webView.setBoardListener(this)
@@ -240,19 +220,138 @@ class MainActivity : Activity(),
         topNav.addView(b)
     }
 
+    /** Small floating handle that can be dragged anywhere in the Play area. */
+    private fun createEngineHandle(): View {
+        val handle = TextView(this).apply {
+            text = "♟"
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(Ui.GREEN)
+            background = Ui.roundedBg(0xE61A1A1A.toInt(), 20f)
+            elevation = 10_001f
+            alpha = 0.92f
+            isFocusable = false // never steal focus from a WebView text field
+            isClickable = true
+            contentDescription = "Show or hide the engine panel"
+        }
+        val size = dp(40)
+        val params = FrameLayout.LayoutParams(size, size)
+        handle.layoutParams = params
+        val savedX = prefs.getInt("engineHandleX", -1)
+        val savedY = prefs.getInt("engineHandleY", -1)
+        playContainer.post {
+            val maxX = (playContainer.width - size).coerceAtLeast(0)
+            val maxY = (playContainer.height - size).coerceAtLeast(0)
+            params.leftMargin = if (savedX >= 0) savedX.coerceIn(0, maxX) else maxX - dp(12)
+            params.topMargin = if (savedY >= 0) savedY.coerceIn(0, maxY) else dp(12)
+            handle.layoutParams = params
+        }
+
+        var downX = 0f
+        var downY = 0f
+        var startLeft = 0
+        var startTop = 0
+        var dragging = false
+        var longPressed = false
+        val hideHandle = Runnable {
+            longPressed = true
+            handle.visibility = View.GONE
+            prefs.edit().putBoolean("engineHandleHidden", true).apply()
+        }
+
+        handle.setOnTouchListener { v, ev ->
+            val p = v.layoutParams as FrameLayout.LayoutParams
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.rawX
+                    downY = ev.rawY
+                    startLeft = p.leftMargin
+                    startTop = p.topMargin
+                    dragging = false
+                    longPressed = false
+                    v.postDelayed(hideHandle, 600)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (ev.rawX - downX).toInt()
+                    val dy = (ev.rawY - downY).toInt()
+                    val threshold = dp(6)
+                    if (dx > threshold || dx < -threshold || dy > threshold || dy < -threshold) {
+                        dragging = true
+                        v.removeCallbacks(hideHandle)
+                    }
+                    if (dragging) {
+                        val maxX = (playContainer.width - size).coerceAtLeast(0)
+                        val maxY = (playContainer.height - size).coerceAtLeast(0)
+                        p.leftMargin = (startLeft + dx).coerceIn(0, maxX)
+                        p.topMargin = (startTop + dy).coerceIn(0, maxY)
+                        v.layoutParams = p
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.removeCallbacks(hideHandle)
+                    if (!dragging && !longPressed) toggleEnginePanel()
+                    if (dragging) {
+                        prefs.edit()
+                            .putInt("engineHandleX", p.leftMargin)
+                            .putInt("engineHandleY", p.topMargin)
+                            .apply()
+                    }
+                    v.performClick()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.removeCallbacks(hideHandle)
+                    true
+                }
+                else -> false
+            }
+        }
+        handle.visibility =
+            if (prefs.getBoolean("engineHandleHidden", false)) View.GONE else View.VISIBLE
+        return handle
+    }
+
+    private fun toggleEnginePanel() {
+        val panel = overlay.view
+        val show = panel.visibility != View.VISIBLE
+        panel.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) panel.bringToFront()
+    }
+
     /** Extra chess.com shortcuts that the official app exposes as separate tabs. */
     private fun showMoreMenu() {
-        val items = arrayOf(
+        val items = arrayListOf(
             "Account / Log in", "Lessons", "Coaches", "Tournaments",
             "Friends", "Analysis board", "Openings", "Puzzle rush"
         )
-        val paths = arrayOf(
+        val paths = arrayListOf(
             "/account", "/lessons", "/coaches", "/tournaments",
             "/friends", "/analysis", "/openings", "/puzzles/rush"
         )
+        if (engineHandle.visibility == View.VISIBLE) {
+            items.add("Hide ENGINE button")
+            paths.add("__hide_handle")
+        } else {
+            items.add("Show ENGINE button")
+            paths.add("__show_handle")
+        }
         AlertDialog.Builder(this)
             .setTitle("Chess.com shortcuts")
-            .setItems(items) { _, which -> webView.loadChessCom(paths[which]) }
+            .setItems(items.toTypedArray()) { _, which ->
+                when (val target = paths[which]) {
+                    "__hide_handle" -> {
+                        engineHandle.visibility = View.GONE
+                        prefs.edit().putBoolean("engineHandleHidden", true).apply()
+                    }
+                    "__show_handle" -> {
+                        engineHandle.visibility = View.VISIBLE
+                        prefs.edit().putBoolean("engineHandleHidden", false).apply()
+                    }
+                    else -> webView.loadChessCom(target)
+                }
+            }
             .setNegativeButton("Close", null)
             .show()
     }

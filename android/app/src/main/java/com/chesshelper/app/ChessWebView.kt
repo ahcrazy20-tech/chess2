@@ -1,8 +1,11 @@
 package com.chesshelper.app
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -42,6 +45,8 @@ class ChessWebView @JvmOverloads constructor(
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.builtInZoomControls = false
         settings.displayZoomControls = false
+        isFocusable = true
+        isFocusableInTouchMode = true
         addJavascriptInterface(InnerBridge(), "ChessHelper")
 
         setWebViewClient(object : WebViewClient() {
@@ -53,6 +58,7 @@ class ChessWebView @JvmOverloads constructor(
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 injectBoardReader()
+                injectKeyboardHook()
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
@@ -105,6 +111,27 @@ class ChessWebView @JvmOverloads constructor(
         )
     }
 
+    /**
+     * Some Samsung/One UI builds focus an HTML input but never raise the soft
+     * keyboard for a WebView. Listen for focus on inputs and explicitly ask the
+     * IME to show itself, so e-mail/password fields behave like a normal browser.
+     */
+    private fun injectKeyboardHook() {
+        val js = """
+            (function(){
+              if (window.__chKeyboardHook) return;
+              window.__chKeyboardHook = true;
+              document.addEventListener('focusin', function(e){
+                var t = e.target;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+                  try { window.ChessHelper && window.ChessHelper.onInputFocused && window.ChessHelper.onInputFocused(); } catch (err) {}
+                }
+              }, true);
+            })();
+        """.trimIndent()
+        evaluateJavascript(js, null)
+    }
+
     private fun loadAsset(name: String): String {
         return try {
             context.assets.open(name).bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -131,6 +158,23 @@ class ChessWebView @JvmOverloads constructor(
                 post { boardListener?.onBoard(payload) }
             } catch (e: Exception) {
                 Log.w("ChessWebView", "bad board payload: ${e.message}")
+            }
+        }
+
+        @JavascriptInterface
+        fun onInputFocused() {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    requestFocus()
+                    val imm =
+                        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    // Slight delay lets Chromium finish focusing the HTML field first.
+                    postDelayed({
+                        imm.showSoftInput(this@ChessWebView, InputMethodManager.SHOW_IMPLICIT)
+                    }, 100)
+                } catch (e: Exception) {
+                    Log.w("ChessWebView", "ime show failed: ${e.message}")
+                }
             }
         }
     }

@@ -153,7 +153,11 @@ class ChessWebView @JvmOverloads constructor(
                     flippedConfident = o.optBoolean("flippedConfident", false),
                     lastMoveUci = o.optString("lastMoveUCI"),
                     plyCount = o.optInt("plyCount", -1),
-                    detectionConfidence = o.optString("detectionConfidence", "unknown")
+                    detectionConfidence = o.optString("detectionConfidence", "unknown"),
+                    fen = o.optString("fen"),
+                    castling = o.optString("castling"),
+                    ep = o.optString("ep"),
+                    source = o.optString("source", "dom")
                 )
                 post { boardListener?.onBoard(payload) }
             } catch (e: Exception) {

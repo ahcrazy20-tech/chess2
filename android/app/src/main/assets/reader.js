@@ -15,9 +15,21 @@
 
   // ---- Board finding ----
   function findBoard() {
-    return document.querySelector(
-      'wc-chess-board, chess-board, cg-board, .board-layout-chessboard'
-    );
+    const selector = 'wc-chess-board, chess-board, cg-board, .board-layout-chessboard';
+    const candidates = Array.from(document.querySelectorAll(selector));
+    let best = null;
+    let bestScore = -1;
+    for (const b of candidates) {
+      const rect = b.getBoundingClientRect ? b.getBoundingClientRect() : null;
+      const area = rect ? rect.width * rect.height : 0;
+      if (area <= 0) continue; // skip hidden/mini boards
+      let hasApi = false;
+      try { hasApi = !!(b.game && typeof b.game.getFEN === 'function'); } catch (e) {}
+      // The board with chess.com's own game API wins, then the largest visible one.
+      const score = (hasApi ? 1000000000 : 0) + area;
+      if (score > bestScore) { best = b; bestScore = score; }
+    }
+    return best || document.querySelector(selector);
   }
 
   // Support both chess.com layouts:

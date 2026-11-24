@@ -3,6 +3,7 @@ package com.chesshelper.app
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -142,7 +143,17 @@ class SettingsActivity : Activity() {
     private fun buildAboutSection() {
         root.addView(Ui.sectionTitle(this, "About"))
         val engineName = if (EngineService.usingStockfish) "Stockfish 19 (on-device)" else "Built-in engine"
-        root.addView(labelRow("Version", Ui.text(this, "2.1.0 (21)", 12f, Ui.TEXT)))
+        val info = try {
+            packageManager.getPackageInfo(packageName, 0)
+        } catch (e: Exception) { null }
+        val code = info?.let {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode
+            else @Suppress("DEPRECATION") it.versionCode.toLong()
+        } ?: -1
+        root.addView(labelRow(
+            "Version",
+            Ui.text(this, "${info?.versionName ?: "?"} ($code)", 12f, Ui.TEXT)
+        ))
         root.addView(labelRow("Engine", Ui.text(this, engineName, 12f, Ui.TEXT)))
         root.addView(labelRow("Build type", Ui.text(this, "Signed APK", 12f, Ui.TEXT)))
 
